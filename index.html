@@ -13,6 +13,14 @@
   <body>
     <div id="toolbar" class="ui-panel">
       <button
+        class="tool-btn"
+        id="btn-room"
+        data-tool="room"
+        title="Room Edit Tool (6)"
+      >
+        <span class="icon">▤</span><span class="label">Rooms</span>
+      </button>
+      <button
         class="tool-btn active"
         id="btn-line"
         data-tool="line"
@@ -68,6 +76,19 @@
       <button id="btn-settings" title="Preferences & Bindings">
         <span class="icon">⚙</span>
       </button>
+      <button class="tool-btn" id="btn-export" title="Export Map to JSON">
+        <span class="icon">💾</span><span class="label">Save</span>
+      </button>
+      <button class="tool-btn" id="btn-import" title="Import Map JSON">
+        <span class="icon">📂</span><span class="label">Load</span>
+      </button>
+      <input
+        type="file"
+        id="file-import"
+        accept=".json"
+        style="display: none"
+      />
+      <div class="divider"></div>
     </div>
 
     <div id="actionbar" class="ui-panel">
@@ -121,6 +142,25 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      id="dynamic-properties-panel"
+      class="ui-panel hidden"
+      style="top: 80px; right: 20px; flex-direction: column; width: 220px"
+    >
+      <div
+        id="panel-title"
+        style="
+          color: #fff;
+          font-size: 14px;
+          font-weight: 600;
+          margin-bottom: 8px;
+        "
+      >
+        Properties
+      </div>
+      <div id="panel-content"></div>
     </div>
   </body>
 </html>

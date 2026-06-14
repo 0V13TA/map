@@ -310,3 +310,15 @@ button:hover {
   appearance: textfield;
   -moz-appearance: textfield;
 }
+
+.prop-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #a0a5b5;
+  font-size: 12px;
+}
+.ui-panel.hidden {
+  display: none;
+}
