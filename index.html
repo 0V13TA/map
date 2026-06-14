@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>Infinite Canvas - Real-time Line Drawing</title>
+    <link rel="stylesheet" href="index.css" />
+    <script src="index.js" defer></script>
+  </head>
+  <body>
+    <div id="toolbar" class="ui-panel">
+      <button
+        class="tool-btn active"
+        id="btn-line"
+        data-tool="line"
+        title="Line Tool (1)"
+      >
+        <span class="icon">╱</span><span class="label">Line</span>
+      </button>
+      <button
+        class="tool-btn"
+        id="btn-split"
+        data-tool="split"
+        title="Split Edge Tool (2)"
+      >
+        <span class="icon">⌿</span><span class="label">Split</span>
+      </button>
+      <div class="tool-group">
+        <button
+          class="tool-btn"
+          id="btn-ngon"
+          data-tool="ngon"
+          title="N-Gon Poly Room (3)"
+        >
+          <span class="icon">⬡</span><span class="label">N-Gon</span>
+        </button>
+        <input
+          type="number"
+          id="ngon-sides"
+          class="tool-input"
+          value="8"
+          min="3"
+          max="12"
+          title="Number of sides (3-12)"
+        />
+      </div>
+
+      <button
+        class="tool-btn"
+        id="btn-zoom"
+        data-tool="zoom"
+        title="Dynamic Zoom Tool (4)"
+      >
+        <span class="icon">⌕</span><span class="label">Zoom</span>
+      </button>
+      <button
+        class="tool-btn"
+        id="btn-drag"
+        data-tool="drag"
+        title="Select & Drag Tool (5)"
+      >
+        <span class="icon">⬈</span><span class="label">Select</span>
+      </button>
+      <div class="divider"></div>
+      <button id="btn-settings" title="Preferences & Bindings">
+        <span class="icon">⚙</span>
+      </button>
+    </div>
+
+    <div id="actionbar" class="ui-panel">
+      <button
+        class="action-btn"
+        id="btn-undo"
+        title="Undo Last Change (Ctrl+Z)"
+      >
+        ↶ Undo
+      </button>
+      <button
+        class="action-btn"
+        id="btn-redo"
+        title="Redo Last Change (Ctrl+Y)"
+      >
+        ↷ Redo
+      </button>
+      <div class="divider"></div>
+      <button
+        class="action-btn"
+        id="btn-rotate"
+        title="Rotate Selected Group (R)"
+      >
+        ↻ Rotate
+      </button>
+      <button
+        class="action-btn dest-btn"
+        id="btn-delete"
+        title="Delete Selection (Del)"
+      >
+        🗑 Delete
+      </button>
+    </div>
+
+    <div id="settings-modal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Preferences & Key Bindings</h2>
+          <button id="close-settings" class="close-btn">✕</button>
+        </div>
+        <p class="modal-subtext">
+          Click on any key binding field below, then press a key combination to
+          assign a new hotkey mapping.
+        </p>
+
+        <div class="bindings-list-container" id="bindings-container"></div>
+
+        <div class="modal-footer">
+          <button id="btn-reset-bindings" class="action-btn">
+            Reset Defaults
+          </button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
