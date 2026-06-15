@@ -10,78 +10,125 @@ canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 document.body.appendChild(canvas);
 
+let zoom = 1.0;
 let offsetX = 0;
 let offsetY = 0;
-let zoom = 1.0;
+const SNAP = 10;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20.0;
-const SNAP = 10;
 
 // =========================
 // ENUMS & ACTIONS
 // =========================
 const TOOLS = {
+  ROOM: "room",
   LINE: "line",
-  SPLIT: "split",
   NGON: "ngon",
   ZOOM: "zoom",
   DRAG: "drag",
+  SPLIT: "split",
 };
 let currentTool = TOOLS.LINE;
 
 const ACTIONS = {
   UNDO: "undo",
   REDO: "redo",
-  DELETE_SELECTION: "delete_selection",
-  ROTATE_SELECTION: "rotate_selection",
+
   SELECT_ALL: "select_all",
+
   SET_TOOL_LINE: "set_tool_line",
-  SET_TOOL_SPLIT: "set_tool_split",
   SET_TOOL_NGON: "set_tool_ngon",
   SET_TOOL_ZOOM: "set_tool_zoom",
   SET_TOOL_DRAG: "set_tool_drag",
+  SET_TOOL_SPLIT: "set_tool_split",
+
+  PAN_UP: "pan_up",
+  PAN_DOWN: "pan_down",
+  PAN_LEFT: "pan_left",
+  PAN_RIGHT: "pan_right",
+
+  DELETE_SELECTION: "delete_selection",
+  ROTATE_SELECTION: "rotate_selection",
 };
 
 const DEFAULT_KEY_BINDINGS = {
   "Ctrl+KeyZ": ACTIONS.UNDO,
   "Ctrl+KeyY": ACTIONS.REDO,
   "Ctrl+KeyA": ACTIONS.SELECT_ALL,
-  Delete: ACTIONS.DELETE_SELECTION,
-  Backspace: ACTIONS.DELETE_SELECTION,
+
   KeyR: ACTIONS.ROTATE_SELECTION,
+
   Digit1: ACTIONS.SET_TOOL_LINE,
   Digit2: ACTIONS.SET_TOOL_SPLIT,
   Digit3: ACTIONS.SET_TOOL_NGON,
   Digit4: ACTIONS.SET_TOOL_ZOOM,
   Digit5: ACTIONS.SET_TOOL_DRAG,
+
+  // Arrow fallbacks for precise canvas movement panning
+  ArrowUp: ACTIONS.PAN_UP,
+  ArrowDown: ACTIONS.PAN_DOWN,
+  ArrowLeft: ACTIONS.PAN_LEFT,
+  ArrowRight: ACTIONS.PAN_RIGHT,
+
+  Delete: ACTIONS.DELETE_SELECTION,
 };
 let keyBindings = { ...DEFAULT_KEY_BINDINGS };
 
 // =========================
 // CORE RELATIONAL DATA ARCHITECTURE
 // =========================
+/**
+ * @typedef {`${string}-${string}-${string}-${string}-${string}`} UUID
+ */
 class Vertex {
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {UUID | null} [id = null]
+   */
   constructor(x, y, id = null) {
+    /** @type {UUID} */
     this.id = id || crypto.randomUUID();
+    /** @type {number} */
     this.x = x;
+    /** @type {number} */
     this.y = y;
   }
 }
 
 class Edge {
+  /**
+   * @param {UUID} v1Id
+   * @param {UUID} v2Id
+   * @param {UUID | null} [id = null]
+   */
   constructor(v1Id, v2Id, id = null) {
+    /** @type {UUID} */
     this.id = id || crypto.randomUUID();
+    /** @type {UUID} */
     this.v1Id = v1Id;
+    /** @type {UUID} */
     this.v2Id = v2Id;
   }
 }
 
+/** @type {Vertex[]} */
 let vertices = [];
+/** @type {Edge[]} */
 let edges = [];
+/** @type {Set<Vertex>} */
 let selectedVertices = new Set();
 
+/**
+ * @param {UUID} id
+ */
 const getV = (id) => vertices.find((v) => v.id === id);
 
+/**
+ * @param {Vertex[]} vPool
+ * @param {number} x
+ * @param {number} y
+ */
 function getOrCreateVertexInPool(vPool, x, y) {
   const existing = vPool.find((v) => Math.hypot(v.x - x, v.y - y) < 0.001);
   if (existing) return existing.id;
@@ -90,7 +137,12 @@ function getOrCreateVertexInPool(vPool, x, y) {
   return newV.id;
 }
 
+/**
+ * @param {Vertex[]} vertexPool
+ * @param {Edge[]} edgePool
+ */
 function buildAdjacencyMap(vertexPool, edgePool) {
+  /** @type {Map<UUID, UUID>} */
   const adjacency = new Map();
   vertexPool.forEach((v) => adjacency.set(v.id, []));
 
@@ -123,27 +175,44 @@ function buildAdjacencyMap(vertexPool, edgePool) {
 // DCEL DATA STRUCTURES & EXTRACTOR
 // =========================
 class HalfEdge {
+  /**
+   * @param {Edge} edge
+   * @param {UUID} originId
+   */
   constructor(edge, originId) {
+    /** @type {UUID} */
     this.id = crypto.randomUUID();
+    /** @type {Edge} */
     this.edge = edge;
+    /** @type {UUID} */
     this.originId = originId;
 
+    /** @type {HalfEdge | null} */
     this.twin = null;
+    /** @type {HalfEdge | null} */
     this.next = null;
+    /** @type {HalfEdge | null} */
     this.prev = null;
+    /** @type {HalfEdge | null} */
     this.face = null;
   }
 }
 
 class Face {
   constructor() {
+    /** @type {UUID} */
     this.id = crypto.randomUUID();
+    /** @type {HalfEdge | null} */
     this.outerComponent = null;
 
     // 3D Engine Properties
+    /** @type {number} */
     this.floorHeight = 0;
+    /** @type {number} */
     this.ceilHeight = 64;
+    /** @type {string} */
     this.floorColor = "#555555";
+    /** @type {string} */
     this.ceilColor = "#888888";
   }
 }
@@ -186,7 +255,9 @@ function isPointInFace(p, face) {
 }
 
 function buildDCEL() {
+  /** @type {HalfEdge[]} */
   halfEdges = [];
+  /** @type {Face[]} */
   faces = [];
 
   // 1. Generate Twins
@@ -206,7 +277,7 @@ function buildDCEL() {
 
     for (let i = 0; i < N; i++) {
       const currentEdgeId = connectedEdgeIds[i];
-      const prevIndex = (i - 1 + N) % N;
+      const prevIndex = (i + 1) % N;
       const prevEdgeId = connectedEdgeIds[prevIndex];
 
       // INBOUND LANE: Belongs to currentEdgeId, and its destination is centerVertexId
@@ -229,13 +300,16 @@ function buildDCEL() {
   });
 
   // 3. Extract Faces
+  /** @type {Set<HalfEdge>} */
   const visited = new Set();
 
   halfEdges.forEach((startEdge) => {
     if (visited.has(startEdge.id) || !startEdge.next) return;
 
     let currentEdge = startEdge;
+    /** @type {HalfEdge[]} */
     let loopEdges = [];
+    /** @type {Vertex[]} */
     let loopVertices = [];
 
     // Trace the loop
@@ -284,6 +358,7 @@ class CommandHistory {
     this.undoStack.push(command);
     this.redoStack = [];
     buildDCEL();
+    saveEditorStateToStorage();
   }
   undo() {
     if (this.undoStack.length === 0) return;
@@ -291,6 +366,7 @@ class CommandHistory {
     cmd.undo();
     this.redoStack.push(cmd);
     buildDCEL();
+    saveEditorStateToStorage();
   }
   redo() {
     if (this.redoStack.length === 0) return;
@@ -298,11 +374,18 @@ class CommandHistory {
     cmd.execute();
     this.undoStack.push(cmd);
     buildDCEL();
+    saveEditorStateToStorage();
   }
 }
 const History = new CommandHistory();
 
 class GeometryChangeCommand {
+  /**
+   *  @param {Vertex[]} newV
+   *  @param {Edge[]} oldE
+   *  @param {Edge[]} newE
+   *  @param {Vertex[]} oldV
+   */
   constructor(oldV, oldE, newV, newE, oldSel, newSel) {
     this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
     this.oldE = oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
@@ -522,6 +605,18 @@ window.addEventListener("keydown", (e) => {
     case ACTIONS.SET_TOOL_DRAG:
       currentTool = TOOLS.DRAG;
       break;
+    case ACTIONS.PAN_UP:
+      offsetY += 40 / zoom;
+      break;
+    case ACTIONS.PAN_DOWN:
+      offsetY -= 40 / zoom;
+      break;
+    case ACTIONS.PAN_LEFT:
+      offsetX += 40 / zoom;
+      break;
+    case ACTIONS.PAN_RIGHT:
+      offsetX -= 40 / zoom;
+      break;
 
     case ACTIONS.DELETE_SELECTION:
       if (selectedVertices.size > 0) {
@@ -614,6 +709,7 @@ let isPanning = false;
 let panLastScreen = [0, 0];
 let hoveredVertexId = null;
 let hoveredEdgeId = null;
+let showTriangulationWireframes = false;
 
 function getMouseCoords(e) {
   const rect = canvas.getBoundingClientRect();
@@ -624,9 +720,10 @@ function getMouseCoords(e) {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button === 1) {
+  if (e.button === 0 && e.altKey) {
     isPanning = true;
     panLastScreen = [e.clientX, e.clientY];
+    e.preventDefault();
     return;
   }
   if (e.button !== 0) return;
@@ -644,6 +741,7 @@ canvas.addEventListener("mousedown", (e) => {
 
   switch (currentTool) {
     case TOOLS.LINE:
+      if (e.altKey) return;
       let hitV = findVertexAt(world);
       if (!hitV) {
         let snapped = snapPoint(world);
@@ -658,6 +756,7 @@ canvas.addEventListener("mousedown", (e) => {
       break;
 
     case TOOLS.NGON:
+      if (e.altKey) return;
       if (!currentAnchorId) {
         let snapped = snapPoint(world);
         currentAnchorId = getOrCreateVertexInPool(
@@ -669,6 +768,7 @@ canvas.addEventListener("mousedown", (e) => {
       break;
 
     case TOOLS.SPLIT:
+      if (e.altKey) return;
       let hitEdge = findEdgeAt(world);
       if (hitEdge) {
         let snapW = snapPoint(world);
@@ -693,6 +793,7 @@ canvas.addEventListener("mousedown", (e) => {
       break;
 
     case TOOLS.DRAG:
+      if (e.altKey) return;
       let grabV = findVertexAt(world);
       let grabE = findEdgeAt(world);
 
@@ -730,6 +831,7 @@ canvas.addEventListener("mousedown", (e) => {
       break;
 
     case TOOLS.ROOM:
+      if (e.altKey) return;
       selectedFaceId = null; // Clear previous selection
 
       // Check every extracted face in the map
@@ -747,6 +849,10 @@ canvas.addEventListener("mousedown", (e) => {
 });
 
 canvas.addEventListener("mousemove", (e) => {
+  const screen = getMouseCoords(e);
+  const world = worldFromMouse(screen[0], screen[1]);
+  currentRawMouse = world;
+
   if (isPanning) {
     let dx = e.clientX - panLastScreen[0];
     let dy = e.clientY - panLastScreen[1];
@@ -769,10 +875,6 @@ canvas.addEventListener("mousemove", (e) => {
       hoveredEdgeId = null;
     }
   }
-
-  const screen = getMouseCoords(e);
-  const world = worldFromMouse(screen[0], screen[1]);
-  currentRawMouse = world;
 
   if (!isMouseDown) return;
 
@@ -802,7 +904,7 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mouseup", (e) => {
-  if (e.button === 1) {
+  if (e.button === 0 && e.altKey) {
     isPanning = false;
     return;
   }
@@ -977,6 +1079,7 @@ function render() {
   drawGrid();
 
   // Draw Faces visually via DCEL structure
+  // Draw Faces visually via DCEL structure
   faces.forEach((face) => {
     ctx.beginPath();
     let currEdge = face.outerComponent;
@@ -999,10 +1102,42 @@ function render() {
       ctx.lineWidth = 2 / zoom;
       ctx.stroke();
     } else {
-      // Use the face's assigned floor color, but add transparency (hex + "40")
       ctx.fillStyle = face.floorColor + "40";
     }
     ctx.fill();
+
+    // ==========================================
+    // LIVE TRIANGULATION WIREFRAME VISUALIZER
+    // ==========================================
+    if (showTriangulationWireframes) {
+      // Gather the perimeter point sequence for this specific face
+      let perimeterVertices = [];
+      let loopEdge = face.outerComponent;
+      do {
+        let v = getV(loopEdge.originId);
+        if (v) perimeterVertices.push(v);
+        loopEdge = loopEdge.next;
+      } while (loopEdge && loopEdge !== face.outerComponent);
+
+      // Run your Ear-Clipping math kernels on the fly
+      const triangles = triangulatePolygonPerimeter(perimeterVertices);
+
+      // Draw the interior diagnostic lines
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 165, 0, 0.35)"; // Thin orange diagnostic lines
+      ctx.lineWidth = 1 / zoom;
+      ctx.setLineDash([2 / zoom, 4 / zoom]); // Dashed blueprint aesthetic
+
+      triangles.forEach(([v1, v2, v3]) => {
+        ctx.beginPath();
+        ctx.moveTo(v1.x, v1.y);
+        ctx.lineTo(v2.x, v2.y);
+        ctx.lineTo(v3.x, v3.y);
+        ctx.closePath();
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
   });
 
   edges.forEach((edge) => {
@@ -1141,19 +1276,94 @@ requestAnimationFrame(update);
 // SERIALIZATION PIPELINE
 // =========================
 function exportMapData() {
-  const mapData = {
-    version: "1.0",
-    vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-    edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
-    sectors: faces.map((f) => ({
+  const TEXTURE_SCALE = 64.0; // Defines tiling scale alignment parameter (e.g. 64 units = 1.0 UV loop)
+
+  const exportSectors = faces.map((f) => {
+    // 1. Trace the closed DCEL loop perimeter to gather the ordered polygon vertices
+    let perimeterVertices = [];
+    let currEdge = f.outerComponent;
+    do {
+      let v = getV(currEdge.originId);
+      if (v) perimeterVertices.push(v);
+      currEdge = currEdge.next;
+    } while (currEdge && currEdge !== f.outerComponent);
+
+    // 2. Generate flat plane triangulation indices
+    const indices2D = triangulatePolygonPerimeter(perimeterVertices);
+
+    // 3. Construct 3D Flooding Mesh Arrays for WebGL processing pipelines
+    let flatFloorTriangles = [];
+    let flatCeilTriangles = [];
+
+    indices2D.forEach(([v1, v2, v3]) => {
+      // Floor Triangle Coordinate Generation Object Map
+      flatFloorTriangles.push({
+        positions: [
+          v1.x,
+          f.floorHeight,
+          v1.y,
+          v2.x,
+          f.floorHeight,
+          v2.y,
+          v3.x,
+          f.floorHeight,
+          v3.y,
+        ],
+        uvs: [
+          v1.x / TEXTURE_SCALE,
+          v1.y / TEXTURE_SCALE,
+          v2.x / TEXTURE_SCALE,
+          v2.y / TEXTURE_SCALE,
+          v3.x / TEXTURE_SCALE,
+          v3.y / TEXTURE_SCALE,
+        ],
+      });
+
+      // Ceiling Triangle Coordinate Generation Object Map (Winding order inverted for downward visibility normals)
+      flatCeilTriangles.push({
+        positions: [
+          v1.x,
+          f.ceilHeight,
+          v1.y,
+          v3.x,
+          f.ceilHeight,
+          v3.y,
+          v2.x,
+          f.ceilHeight,
+          v2.y,
+        ],
+        uvs: [
+          v1.x / TEXTURE_SCALE,
+          v1.y / TEXTURE_SCALE,
+          v3.x / TEXTURE_SCALE,
+          v3.y / TEXTURE_SCALE,
+          v2.x / TEXTURE_SCALE,
+          v2.y / TEXTURE_SCALE,
+        ],
+      });
+    });
+
+    return {
       id: f.id,
       floorHeight: f.floorHeight,
       ceilHeight: f.ceilHeight,
       floorColor: f.floorColor,
       ceilColor: f.ceilColor,
-      anchorEdgeId: f.outerComponent.edge.id,
-      anchorOriginId: f.outerComponent.originId,
-    })),
+      anchorEdgeId: f.outerComponent?.edge?.id,
+      anchorOriginId: f.outerComponent?.originId,
+      // Extruded 3D Mesh Arrays ready for WebGL Float32Array compilation buffer loads
+      mesh3D: {
+        floorTriangles: flatFloorTriangles,
+        ceilTriangles: flatCeilTriangles,
+      },
+    };
+  });
+
+  const mapData = {
+    version: "1.0",
+    vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
+    edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+    sectors: exportSectors,
   };
 
   const dataStr =
@@ -1161,7 +1371,7 @@ function exportMapData() {
     encodeURIComponent(JSON.stringify(mapData, null, 2));
   const downloadAnchor = document.createElement("a");
   downloadAnchor.setAttribute("href", dataStr);
-  downloadAnchor.setAttribute("download", "orc_map_01.json");
+  downloadAnchor.setAttribute("download", "orc_map_3d_ready.json");
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.remove();
@@ -1209,6 +1419,225 @@ function importMapData(jsonString) {
   }
 }
 
+// ==========================================
+// EAR CLIPPING TRIANGULATION GEOMETRY ENGINE
+// ==========================================
+
+/**
+ * Uses 2D cross-products to determine if a point sits inside a triangle triangle boundary.
+ */
+function isPointInTriangle(p, a, b, c) {
+  const cross = (v1, v2, v3) =>
+    (v2.x - v1.x) * (v3.y - v1.y) - (v2.y - v1.y) * (v3.x - v1.x);
+
+  const hasNeg = cross(a, b, p) < 0 || cross(b, c, p) < 0 || cross(c, a, p) < 0;
+  const hasPos = cross(a, b, p) > 0 || cross(b, c, p) > 0 || cross(c, a, p) > 0;
+
+  return !(hasNeg && hasPos);
+}
+
+/**
+ * Slices an ordered counter-clockwise array of perimeter points into an array of triangles.
+ * Returns an array of vertex triplets: [[v1, v2, v3], [v1, v2, v3], ...]
+ */
+function triangulatePolygonPerimeter(polygonVertices) {
+  // Clean step: Filter out any consecutive duplicate vertices that break vector lines
+  let cleaned = [];
+  for (let i = 0; i < polygonVertices.length; i++) {
+    let currV = polygonVertices[i];
+    let nextV = polygonVertices[(i + 1) % polygonVertices.length];
+    // If next vertex is at the exact same location, skip adding the duplicate segment
+    if (Math.hypot(nextV.x - currV.x, nextV.y - currV.y) > 0.001) {
+      cleaned.push(currV);
+    }
+  }
+
+  let remaining = [...cleaned];
+  let triangles = [];
+
+  // Guard condition for degenerate structures
+  if (remaining.length < 3) return triangles;
+
+  // If it's already a perfect triangle, return it immediately
+  if (remaining.length === 3) {
+    triangles.push([remaining[0], remaining[1], remaining[2]]);
+    return triangles;
+  }
+
+  let safetyCounter = 0;
+  const maxIterations = remaining.length * remaining.length;
+
+  while (remaining.length > 3) {
+    let earFound = false;
+    const n = remaining.length;
+
+    for (let i = 0; i < n; i++) {
+      const prev = remaining[(i - 1 + n) % n];
+      const curr = remaining[i];
+      const next = remaining[(i + 1) % n];
+
+      // Rule 1: Winding Check. Use an epsilon threshold (> 0.001) instead of strict 0
+      // to safely clear floating-point rounding errors on colinear line paths!
+      const crossProduct =
+        (curr.x - prev.x) * (next.y - curr.y) -
+        (curr.y - prev.y) * (next.x - curr.x);
+      if (crossProduct <= 0.001) continue;
+
+      // Rule 2: Point-In-Triangle Check. Ensure no remaining vertices puncture the ear candidate.
+      let isEar = true;
+      for (let j = 0; j < n; j++) {
+        if (j === (i - 1 + n) % n || j === i || j === (i + 1) % n) continue;
+
+        if (isPointInTriangle(remaining[j], prev, curr, next)) {
+          isEar = false;
+          break;
+        }
+      }
+
+      // Snip the ear tip out of the polygon calculation
+      if (isEar) {
+        triangles.push([prev, curr, next]);
+        remaining.splice(i, 1);
+        earFound = true;
+        break;
+      }
+    }
+
+    // Infinite loop escape hatch safety valve
+    safetyCounter++;
+    if (safetyCounter > maxIterations) {
+      break;
+    }
+
+    if (!earFound) {
+      break;
+    }
+  }
+
+  if (remaining.length === 3) {
+    triangles.push([remaining[0], remaining[1], remaining[2]]);
+  }
+
+  return triangles;
+}
+
+// =========================
+// STATE PERSISTENCE ENGINE
+// =========================
+function saveEditorStateToStorage() {
+  const payload = {
+    currentTool: currentTool, // NEW PERSISTENCE PARAMETER
+    geometry: {
+      vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
+      edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+    },
+    sectors: faces.map((f) => ({
+      id: f.id,
+      floorHeight: f.floorHeight,
+      ceilHeight: f.ceilHeight,
+      floorColor: f.floorColor,
+      ceilColor: f.ceilColor,
+      anchorEdgeId: f.outerComponent?.edge?.id,
+      anchorOriginId: f.outerComponent?.originId,
+    })),
+    history: {
+      undo: History.undoStack.map((cmd) => ({
+        oldV: cmd.oldV,
+        oldE: cmd.oldE,
+        newV: cmd.newV,
+        newE: cmd.newE,
+        oldSel: cmd.oldSel,
+        newSel: cmd.newSel,
+      })),
+      redo: History.redoStack.map((cmd) => ({
+        oldV: cmd.oldV,
+        oldE: cmd.oldE,
+        newV: cmd.newV,
+        newE: cmd.newE,
+        oldSel: cmd.oldSel,
+        newSel: cmd.newSel,
+      })),
+    },
+    keyBindings: keyBindings,
+  };
+  localStorage.setItem("orc_engine_editor_state", JSON.stringify(payload));
+}
+
+function loadEditorStateFromStorage() {
+  const raw = localStorage.getItem("orc_engine_editor_state");
+  if (!raw) return false;
+
+  try {
+    const data = JSON.parse(raw);
+
+    // 1. Rehydrate Hotkeys
+    if (data.keyBindings) keyBindings = data.keyBindings;
+
+    // 2. Rehydrate Active Tool Selection State
+    if (data.currentTool) currentTool = data.currentTool;
+
+    // 3. Rehydrate Topology
+    if (data.geometry) {
+      vertices = data.geometry.vertices.map((v) => new Vertex(v.x, v.y, v.id));
+      edges = data.geometry.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    }
+
+    // 4. Rebuild DCEL Mesh
+    buildDCEL();
+
+    // 5. Re-inject Sector 3D parameters
+    if (data.sectors) {
+      data.sectors.forEach((savedSector) => {
+        const anchorHE = halfEdges.find(
+          (he) =>
+            he.edge.id === savedSector.anchorEdgeId &&
+            he.originId === savedSector.anchorOriginId,
+        );
+        if (anchorHE && anchorHE.face) {
+          const face = anchorHE.face;
+          face.id = savedSector.id;
+          face.floorHeight = savedSector.floorHeight;
+          face.ceilHeight = savedSector.ceilHeight;
+          face.floorColor = savedSector.floorColor;
+          face.ceilColor = savedSector.ceilColor;
+        }
+      });
+    }
+
+    // 6. Reconstruct Command History Objects
+    if (data.history) {
+      History.undoStack = data.history.undo.map(
+        (h) =>
+          new GeometryChangeCommand(
+            h.oldV,
+            h.oldE,
+            h.newV,
+            h.newE,
+            h.oldSel,
+            h.newSel,
+          ),
+      );
+      History.redoStack = data.history.redo.map(
+        (h) =>
+          new GeometryChangeCommand(
+            h.oldV,
+            h.oldE,
+            h.newV,
+            h.newE,
+            h.oldSel,
+            h.newSel,
+          ),
+      );
+    }
+
+    return true;
+  } catch (err) {
+    console.warn("Auto-load failed, clearing corrupted fallback space:", err);
+    localStorage.removeItem("orc_engine_editor_state");
+    return false;
+  }
+}
+
 // =========================
 // DYNAMIC UI COMPONENT ENGINE
 // =========================
@@ -1235,6 +1664,7 @@ class UIBuilder {
           input.addEventListener("input", (e) => {
             targetObj[field.key] = parseFloat(e.target.value) || 0;
             if (onChange) onChange(field.key, targetObj[field.key]);
+            saveEditorStateToStorage();
           });
           break;
 
@@ -1247,6 +1677,7 @@ class UIBuilder {
           input.addEventListener("input", (e) => {
             targetObj[field.key] = e.target.value;
             if (onChange) onChange(field.key, targetObj[field.key]);
+            saveEditorStateToStorage();
           });
           break;
       }
@@ -1284,6 +1715,10 @@ const UI = {
 
   activeListeningRow: null,
 
+  propertiesPanel: document.getElementById("dynamic-properties-panel"),
+  propertiesContent: document.getElementById("panel-content"),
+  toggleTrianglesBtn: document.getElementById("btn-toggle-triangles"), // Add reference
+
   init() {
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1292,6 +1727,7 @@ const UI = {
           currentTool = TOOLS[targetTool.toUpperCase()];
           this.updateToolUI();
           this.updatePropertiesPanel();
+          saveEditorStateToStorage();
         }
       });
     });
@@ -1310,6 +1746,17 @@ const UI = {
     this.rotateBtn.addEventListener("click", () =>
       window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyR" })),
     );
+    this.toggleTrianglesBtn.addEventListener("click", () => {
+      showTriangulationWireframes = !showTriangulationWireframes;
+      if (showTriangulationWireframes) {
+        this.toggleTrianglesBtn.textContent = "📐 Triangles: On";
+        this.toggleTrianglesBtn.style.color = "#ffaa00"; // Orange highlight when active
+      } else {
+        this.toggleTrianglesBtn.textContent = "📐 Triangles: Off";
+        this.toggleTrianglesBtn.style.color = "";
+      }
+    });
+
     this.settingsBtn.addEventListener("click", () => this.openModal());
     this.closeSettingsBtn.addEventListener("click", () => this.closeModal());
     this.settingsModal.addEventListener("click", (e) => {
@@ -1440,16 +1887,30 @@ const UI = {
     });
     keyBindings[proposedCombo] = actionTarget;
     this.populateBindingsUI();
+    saveEditorStateToStorage();
   },
 
   updateToolUI() {
     this.toolButtons.forEach((btn) => {
       const btnTool = btn.getAttribute("data-tool");
-      if (btnTool && TOOLS[btnTool.toUpperCase()] === currentTool)
+      // Clean, bulletproof string verification matching currentTool
+      if (btnTool && btnTool === currentTool) {
         btn.classList.add("active");
-      else btn.classList.remove("active");
+      } else {
+        btn.classList.remove("active");
+      }
     });
   },
 };
 
 UI.init();
+
+// Initialize or Hydrate existing Session
+const hydrated = loadEditorStateFromStorage();
+if (hydrated) {
+  console.log("ORC Mesh Engine session rehydrated successfully.");
+  UI.updateToolUI();
+  UI.updatePropertiesPanel();
+} else {
+  buildDCEL();
+}
