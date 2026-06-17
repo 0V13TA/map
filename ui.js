@@ -2,59 +2,176 @@ import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
 import { State, saveEditorStateToStorage } from "./state_persistence.js";
 import { exportMapData, importMapData } from "./serialization.js";
 
-export class UIBuilder {
-  static createForm(container, targetObj, schema, onChange) {
-    container.innerHTML = "";
-    if (!targetObj) return;
+// ============================================================================
+// ORC_Inspector: Generic, Agnostic UI Component Library
+// ============================================================================
+export class ORC_Inspector {
+  /**
+   * @param {HTMLElement} parentElement - Container to append into.
+   * @param {Object} config - Configuration object containing { id, title }.
+   * @param {Array<Object>} schema - Blueprint configuration array for fields.
+   * @param {EventTarget} [eventTarget=window] - Injected event bus for portability.
+   */
+  constructor(parentElement, config, schema, eventTarget = window) {
+    if (!config || !config.id) {
+      throw new Error(
+        "ORC_Inspector Error: 'config.id' is compulsory for event routing.",
+      );
+    }
 
-    schema.forEach((field) => {
-      const row = document.createElement("div");
-      row.className = "prop-row";
+    this.parent = parentElement;
+    this.id = config.id;
+    this.title = config.title || "";
+    this.schema = schema;
+    this.eventTarget = eventTarget; // Dependency Injection!
 
-      const label = document.createElement("label");
-      label.textContent = field.label;
-      row.appendChild(label);
+    this.state = {};
+    this.elements = {};
 
-      let input;
-      switch (field.type) {
-        case "number":
-          input = document.createElement("input");
-          input.type = "number";
-          input.className = "tool-input";
-          input.value = targetObj[field.key];
-          input.addEventListener("input", (e) => {
-            targetObj[field.key] = parseFloat(e.target.value) || 0;
-            if (onChange) onChange(field.key, targetObj[field.key]);
-            saveEditorStateToStorage();
-          });
-          break;
+    this.container = document.createElement("div");
+    this.container.className = "inspector-container";
+    this.container.style.cssText =
+      "display: none; flex-direction: column; width: 100%;";
 
-        case "color":
-          input = document.createElement("input");
-          input.type = "color";
-          input.style.cssText =
-            "background: transparent; border: none; cursor: pointer;";
-          input.value = targetObj[field.key];
-          input.addEventListener("input", (e) => {
-            targetObj[field.key] = e.target.value;
-            if (onChange) onChange(field.key, targetObj[field.key]);
-            saveEditorStateToStorage();
-          });
-          break;
+    if (this.title) {
+      const header = document.createElement("div");
+      header.className = "panel-title";
+      header.style.cssText =
+        "color: #fff; font-size: 14px; font-weight: 600; margin-bottom: 12px;";
+      header.textContent = this.title;
+      this.container.appendChild(header);
+    }
+
+    this.schema.forEach((field) => this.createField(field));
+
+    this.parent.appendChild(this.container);
+  }
+
+  /**
+   * Internal Field Factory: Handles creation and validation logic agnostically.
+   */
+  createField(field) {
+    // Seed initial state
+    this.state[field.key] =
+      field.value !== undefined
+        ? field.value
+        : field.type === "number"
+          ? 0
+          : "#ffffff";
+
+    const row = document.createElement("div");
+    row.className = "prop-row";
+    row.style.cssText =
+      "display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: #a0a5b5; font-size: 12px;";
+
+    const label = document.createElement("label");
+    label.textContent = field.label;
+    row.appendChild(label);
+
+    let input;
+
+    if (field.type === "number") {
+      input = document.createElement("input");
+      input.type = "number";
+      input.className = "tool-input";
+      input.value = this.state[field.key];
+
+      // Generic Validation Attributes
+      if (field.min !== undefined) input.min = field.min;
+      if (field.max !== undefined) input.max = field.max;
+      if (field.step !== undefined) input.step = field.step;
+
+      input.addEventListener("input", (e) => {
+        let val = parseFloat(e.target.value) || 0;
+        // Enforce limits agnostically
+        if (field.min !== undefined) val = Math.max(field.min, val);
+        if (field.max !== undefined) val = Math.min(field.max, val);
+        this.state[field.key] = val;
+        this.emitChangeEvent();
+      });
+    } else if (field.type === "color") {
+      input = document.createElement("input");
+      input.type = "color";
+      input.style.cssText =
+        "background: transparent; border: none; cursor: pointer; width: 32px; height: 24px;";
+      input.value = this.state[field.key];
+
+      input.addEventListener("input", (e) => {
+        this.state[field.key] = e.target.value;
+        this.emitChangeEvent();
+      });
+    } else if (field.type === "select") {
+      input = document.createElement("select");
+      input.className = "tool-input";
+      input.style.width = "75px";
+      field.options.forEach((opt) => {
+        let option = document.createElement("option");
+        option.value = opt;
+        option.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
+        if (this.state[field.key] === opt) option.selected = true;
+        input.appendChild(option);
+      });
+
+      input.addEventListener("change", (e) => {
+        this.state[field.key] = e.target.value;
+        this.emitChangeEvent();
+      });
+    }
+
+    if (field.readOnly) {
+      input.disabled = true;
+      input.style.opacity = "0.5";
+      input.style.cursor = "not-allowed";
+    }
+
+    this.elements[field.key] = input;
+    if (input) row.appendChild(input);
+    this.container.appendChild(row);
+  }
+
+  /**
+   * Bulk updates the inspector state programmatically.
+   * @param {Object} valueMap - Dictionary of key/value pairs to update.
+   */
+  setValues(valueMap) {
+    for (const [key, newValue] of Object.entries(valueMap)) {
+      if (this.elements[key]) {
+        this.state[key] = newValue;
+        this.elements[key].value = newValue;
       }
-      if (input) row.appendChild(input);
-      container.appendChild(row);
+    }
+  }
+
+  getValues() {
+    return { ...this.state };
+  }
+  show() {
+    this.container.style.display = "flex";
+  }
+  hide() {
+    this.container.style.display = "none";
+  }
+
+  emitChangeEvent() {
+    const eventPayload = {
+      id: this.id, // Emits the stable logic ID
+      title: this.title, // Emits the UI title (optional context)
+      values: this.getValues(),
+    };
+    const changeEvent = new CustomEvent("orc_inspector_change", {
+      detail: eventPayload,
     });
+    this.eventTarget.dispatchEvent(changeEvent); // Uses the injected event bus!
+  }
+
+  destroy() {
+    this.container.remove();
   }
 }
 
-const roomSchema = [
-  { label: "Floor Height", key: "floorHeight", type: "number" },
-  { label: "Ceil Height", key: "ceilHeight", type: "number" },
-  { label: "Floor Color", key: "floorColor", type: "color" },
-  { label: "Ceil Color", key: "ceilColor", type: "color" },
-];
-
+// ============================================================================
+// GLOBAL UI CONTROLLER
+// ============================================================================
 export const UI = {
   toolButtons: document.querySelectorAll(".tool-btn"),
   undoBtn: document.getElementById("btn-undo"),
@@ -71,7 +188,49 @@ export const UI = {
   toggleTrianglesBtn: document.getElementById("btn-toggle-triangles"),
   activeListeningRow: null,
 
+  // Inspector Instance Hooks
+  roomInspector: null,
+  wallInspector: null,
+
   init() {
+    // 1. Bootstrap the Retained-Mode Inspectors
+    this.roomInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "room_inspector", title: "Room Properties" }, // Config object!
+      [
+        { label: "Floor Height", key: "floorHeight", type: "number", value: 0 },
+        { label: "Ceil Height", key: "ceilHeight", type: "number", value: 64 },
+        {
+          label: "Floor Color",
+          key: "floorColor",
+          type: "color",
+          value: "#555555",
+        },
+        {
+          label: "Ceil Color",
+          key: "ceilColor",
+          type: "color",
+          value: "#888888",
+        },
+      ],
+    );
+
+    this.wallInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "wall_inspector", title: "Wall Properties" },
+      [
+        {
+          label: "Wall Type",
+          key: "type",
+          type: "select",
+          options: ["solid", "portal", "door"],
+          value: "solid",
+        },
+        { label: "Texture ID", key: "textureId", type: "number", value: 0 },
+      ],
+    );
+
+    // 2. Wire up the rest of the UI interactions
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const targetTool = btn.getAttribute("data-tool");
@@ -93,7 +252,6 @@ export const UI = {
       this.updatePropertiesPanel();
     });
 
-    // Change these from window.dispatchEvent to target the canvas directly
     this.deleteBtn.addEventListener("click", () => {
       const cvs = document.querySelector("canvas");
       if (cvs)
@@ -173,24 +331,49 @@ export const UI = {
     this.settingsModal.classList.remove("hidden");
     this.populateBindingsUI();
   },
+
   closeModal() {
     this.settingsModal.classList.add("hidden");
     this.activeListeningRow = null;
   },
 
   updatePropertiesPanel() {
+    // Hide everything implicitly
+    this.propertiesPanel.classList.add("hidden");
+    this.roomInspector.hide();
+    this.wallInspector.hide();
+
+    // Selectively reveal and sync based on tool/selection context
     if (State.currentTool === TOOLS.ROOM && State.selectedFaceId) {
       const selectedFace = State.faces.find(
         (f) => f.id === State.selectedFaceId,
       );
       if (selectedFace) {
         this.propertiesPanel.classList.remove("hidden");
-        UIBuilder.createForm(this.propertiesContent, selectedFace, roomSchema);
-        return;
+
+        // Beautiful, bulk programmatic sync
+        this.roomInspector.setValues({
+          floorHeight: selectedFace.floorHeight,
+          ceilHeight: selectedFace.ceilHeight,
+          floorColor: selectedFace.floorColor,
+          ceilColor: selectedFace.ceilColor,
+        });
+
+        this.roomInspector.show();
+      }
+    } else if (State.currentTool === TOOLS.WALL && State.selectedEdgeId) {
+      const selectedEdge = State.edges.find(
+        (e) => e.id === State.selectedEdgeId,
+      );
+      if (selectedEdge) {
+        this.propertiesPanel.classList.remove("hidden");
+
+        this.wallInspector.setValue("type", selectedEdge.type);
+        this.wallInspector.setValue("textureId", selectedEdge.textureId);
+
+        this.wallInspector.show();
       }
     }
-    this.propertiesPanel.classList.add("hidden");
-    this.propertiesContent.innerHTML = "";
   },
 
   populateBindingsUI() {

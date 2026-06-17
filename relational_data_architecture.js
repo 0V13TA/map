@@ -33,6 +33,11 @@ export class Edge {
     this.v1Id = v1Id;
     /** @type {UUID} */
     this.v2Id = v2Id;
+
+    /** @type {"solid" | "portal" | "door"} */
+    this.type = "solid";
+    /** @type {number} */
+    this.textureId = 0;
   }
 }
 

@@ -206,10 +206,14 @@ canvas.addEventListener("mousedown", (e) => {
 
   actionStartSnapshot = {
     v: State.vertices.map((v) => new Vertex(v.x, v.y, v.id)),
-    e: State.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id)),
+    e: State.edges.map((e) => {
+      let edge = new Edge(e.v1Id, e.v2Id, e.id);
+      edge.type = e.type;
+      edge.textureId = e.textureId;
+      return edge;
+    }),
     sel: new Set(State.selectedVertices),
   };
-
   currentRawMouse = [...world];
   dragLastWorld = [...world];
   isBoxSelecting = false;
@@ -275,6 +279,16 @@ canvas.addEventListener("mousedown", (e) => {
       if (e.altKey) return;
       let grabV = findVertexAt(world);
       let grabE = findEdgeAt(world);
+
+      // 1. Check if the user is clicking directly inside a solid room face
+      let grabF = null;
+      for (let face of State.faces) {
+        if (isPointInFace(world, face)) {
+          grabF = face;
+          break;
+        }
+      }
+
       initialDragStateSnapshot = {
         v: State.vertices.map((v) => new Vertex(v.x, v.y, v.id)),
         e: State.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id)),
@@ -290,11 +304,21 @@ canvas.addEventListener("mousedown", (e) => {
           State.selectedVertices.add(grabV.id);
         }
       } else if (isPointInSelectionBounds(world)) {
-        // Do nothing, let mousemove handle grouping drag
+        // Do nothing, let mousemove handle grouping drag for existing selections
       } else if (grabE) {
         if (!e.shiftKey) State.selectedVertices.clear();
         State.selectedVertices.add(grabE.v1Id);
         State.selectedVertices.add(grabE.v2Id);
+      } else if (grabF) {
+        // 2. Select all vertices tracing the perimeter of the clicked room!
+        if (!e.shiftKey) State.selectedVertices.clear();
+        let loopEdge = grabF.outerComponent;
+        if (loopEdge) {
+          do {
+            State.selectedVertices.add(loopEdge.originId);
+            loopEdge = loopEdge.next;
+          } while (loopEdge && loopEdge !== grabF.outerComponent);
+        }
       } else {
         if (!e.shiftKey) State.selectedVertices.clear();
         isBoxSelecting = true;
@@ -311,6 +335,13 @@ canvas.addEventListener("mousedown", (e) => {
           break;
         }
       }
+      UI.updatePropertiesPanel();
+      break;
+
+    case TOOLS.WALL:
+      if (e.altKey) return;
+      let hitEdge1 = findEdgeAt(world);
+      State.selectedEdgeId = hitEdge1 ? hitEdge1.id : null;
       UI.updatePropertiesPanel();
       break;
   }
@@ -517,6 +548,28 @@ canvas.addEventListener("wheel", (e) => {
   State.offsetY = screen[1] / State.zoom - wM[1];
 });
 
+window.addEventListener("orc_inspector_change", (e) => {
+  const { id, values } = e.detail;
+
+  if (id === "room_properties" && State.selectedFaceId) {
+    const face = State.faces.find((f) => f.id === State.selectedFaceId);
+    if (face) {
+      face.floorHeight = values.floorHeight;
+      face.ceilHeight = values.ceilHeight;
+      face.floorColor = values.floorColor;
+      face.ceilColor = values.ceilColor;
+      saveEditorStateToStorage();
+    }
+  } else if (id === "wall_properties" && State.selectedEdgeId) {
+    const edge = State.edges.find((e) => e.id === State.selectedEdgeId);
+    if (edge) {
+      edge.type = values.type;
+      edge.textureId = values.textureId;
+      saveEditorStateToStorage();
+    }
+  }
+});
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#0d0f12";
@@ -555,7 +608,6 @@ function render() {
   }
 
   // Draw Faces
-  // Draw Faces
   State.faces.forEach((face) => {
     ctx.beginPath();
     let currEdge = face.outerComponent,
@@ -571,18 +623,18 @@ function render() {
       currEdge = currEdge.next;
     } while (currEdge && currEdge !== face.outerComponent);
 
-    // FIX 1: ALWAYS draw the base material color first so you can preview edits live!
-    ctx.fillStyle = face.floorColor + "99"; // Add hex transparency (approx 60% alpha)
+    // Render the base physical color transparently FIRST
+    ctx.fillStyle = face.floorColor + "99";
     ctx.fill();
 
-    // Then layer the selection highlights on top
+    // Layer the bright blue outline ONLY if selected
     if (State.selectedFaceId === face.id) {
-      ctx.fillStyle = "rgba(0, 150, 255, 0.2)"; // Soft blue selection tint
+      ctx.fillStyle = "rgba(0, 150, 255, 0.2)";
       ctx.fill();
       ctx.strokeStyle = "rgba(0, 150, 255, 0.8)";
       ctx.lineWidth = 2 / State.zoom;
       ctx.stroke();
-    } else ctx.fillStyle = face.floorColor + "40";
+    }
     ctx.fill();
 
     if (State.showTriangulationWireframes) {
@@ -615,21 +667,48 @@ function render() {
     let v1 = getV(State.vertices, edge.v1Id),
       v2 = getV(State.vertices, edge.v2Id);
     if (!v1 || !v2) return;
+
+    // DIAGNOSTIC: Check if this edge is swallowed by a Face in the DCEL
+    let isLoose = true;
+    let hEdges = State.halfEdges.filter((he) => he.edge.id === edge.id);
+    if (hEdges.some((he) => he.face !== null)) isLoose = false;
+
     ctx.beginPath();
     ctx.moveTo(v1.x, v1.y);
     ctx.lineTo(v2.x, v2.y);
+
     let standsSelected =
       State.selectedVertices.has(edge.v1Id) &&
       State.selectedVertices.has(edge.v2Id);
-    ctx.strokeStyle = standsSelected ? "#ff4444" : "#ffffff";
     ctx.lineWidth = standsSelected ? 3.5 / State.zoom : 2 / State.zoom;
-    if (edge.id === hoveredEdgeId) {
+
+    if (isLoose) {
+      // LOOSE EDGE: Render as glowing dashed Magenta so you can spot topological gaps instantly!
+      ctx.strokeStyle = standsSelected ? "#ff4444" : "#ff00ff";
+      ctx.setLineDash([8 / State.zoom, 8 / State.zoom]);
+    } else {
+      // CONNECTED EDGE: Render based on its physical portal/door properties
+      ctx.strokeStyle = standsSelected ? "#ff4444" : "#ffffff"; // Solid default
+      if (edge.type === "portal") {
+        ctx.strokeStyle = "#44ffff"; // Portals are Cyan dashed lines
+        ctx.setLineDash([4 / State.zoom, 4 / State.zoom]);
+      } else if (edge.type === "door") {
+        ctx.strokeStyle = "#ffaa00"; // Doors are Orange solid lines
+        ctx.setLineDash([]);
+      } else {
+        ctx.setLineDash([]);
+      }
+    }
+
+    // Hover or Active Wall Selection Highlights
+    if (edge.id === hoveredEdgeId || edge.id === State.selectedEdgeId) {
       ctx.strokeStyle = "#ffd966";
       ctx.lineWidth = 4 / State.zoom;
     }
-    ctx.stroke();
-  });
 
+    ctx.stroke();
+    ctx.setLineDash([]); // Reset dash for subsequent drawing operations
+  });
   // Selection Bounds
   if (State.selectedVertices.size > 1) {
     ctx.fillStyle = "rgba(255, 68, 68, 0.04)";

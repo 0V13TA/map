@@ -11,8 +11,10 @@ export const State = {
   edges: [],
   faces: [],
   halfEdges: [],
+
   selectedVertices: new Set(),
   selectedFaceId: null,
+  selectedEdgeId: null,
 
   currentTool: TOOLS.LINE,
   keyBindings: { ...DEFAULT_KEY_BINDINGS },
@@ -33,7 +35,13 @@ export function saveEditorStateToStorage() {
     currentTool: State.currentTool,
     geometry: {
       vertices: State.vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-      edges: State.edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+      edges: State.edges.map((e) => ({
+        id: e.id,
+        v1Id: e.v1Id,
+        v2Id: e.v2Id,
+        type: e.type,
+        textureId: e.textureId,
+      })),
     },
     sectors: State.faces.map((f) => ({
       id: f.id,
@@ -81,9 +89,12 @@ export function loadEditorStateFromStorage() {
       State.vertices = data.geometry.vertices.map(
         (v) => new Vertex(v.x, v.y, v.id),
       );
-      State.edges = data.geometry.edges.map(
-        (e) => new Edge(e.v1Id, e.v2Id, e.id),
-      );
+      State.edges = data.geometry.edges.map((e) => {
+        let edge = new Edge(e.v1Id, e.v2Id, e.id);
+        if (e.type) edge.type = e.type;
+        if (e.textureId !== undefined) edge.textureId = e.textureId;
+        return edge;
+      });
     }
 
     buildDCEL();

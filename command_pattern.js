@@ -41,22 +41,42 @@ export class CommandHistory {
 export class GeometryChangeCommand {
   constructor(oldV, oldE, newV, newE, oldSel, newSel) {
     this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
-    this.oldE = oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    this.oldE = oldE.map((e) => {
+      let ne = new Edge(e.v1Id, e.v2Id, e.id);
+      ne.type = e.type;
+      ne.textureId = e.textureId;
+      return ne;
+    });
     this.newV = newV.map((v) => new Vertex(v.x, v.y, v.id));
-    this.newE = newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    this.newE = newE.map((e) => {
+      let ne = new Edge(e.v1Id, e.v2Id, e.id);
+      ne.type = e.type;
+      ne.textureId = e.textureId;
+      return ne;
+    });
     this.oldSel = [...oldSel];
     this.newSel = [...newSel];
   }
 
   execute() {
     State.vertices = this.newV.map((v) => new Vertex(v.x, v.y, v.id));
-    State.edges = this.newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.edges = this.newE.map((e) => {
+      let ne = new Edge(e.v1Id, e.v2Id, e.id);
+      ne.type = e.type;
+      ne.textureId = e.textureId;
+      return ne;
+    });
     State.selectedVertices = new Set(this.newSel);
   }
 
   undo() {
     State.vertices = this.oldV.map((v) => new Vertex(v.x, v.y, v.id));
-    State.edges = this.oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.edges = this.oldE.map((e) => {
+      let ne = new Edge(e.v1Id, e.v2Id, e.id);
+      ne.type = e.type;
+      ne.textureId = e.textureId;
+      return ne;
+    });
     State.selectedVertices = new Set(this.oldSel);
   }
 }

@@ -2,6 +2,7 @@
 // ENUMS & ACTIONS
 // =========================
 export const TOOLS = {
+  WALL: "wall",
   ROOM: "room",
   LINE: "line",
   NGON: "ngon",

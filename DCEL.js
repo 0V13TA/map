@@ -48,6 +48,8 @@ export function isPointInFace(p, face) {
 }
 
 export function buildDCEL() {
+  const oldFaces = [...State.faces]; // Cache old faces before destroying them
+
   State.halfEdges.length = 0;
   State.faces.length = 0;
 
@@ -116,6 +118,21 @@ export function buildDCEL() {
       const newFace = new Face();
       newFace.outerComponent = startEdge;
       loopEdges.forEach((edge) => (edge.face = newFace));
+
+      // PRESERVE PROPERTIES: If this loop shares any edge with a previous face, inherit its colors/heights!
+      const match = oldFaces.find(
+        (oldF) =>
+          oldF.outerComponent &&
+          loopEdges.some((e) => e.edge.id === oldF.outerComponent.edge.id),
+      );
+      if (match) {
+        newFace.id = match.id; // Keep the same identity
+        newFace.floorHeight = match.floorHeight;
+        newFace.ceilHeight = match.ceilHeight;
+        newFace.floorColor = match.floorColor;
+        newFace.ceilColor = match.ceilColor;
+      }
+
       State.faces.push(newFace);
     }
   });
