@@ -322,3 +322,78 @@ button:hover {
 .ui-panel.hidden {
   display: none;
 }
+
+/* ==========================================
+   RESPONSIVE DESIGN & MOBILE OPTIMIZATION
+   ========================================== */
+
+/* TABLET VIEWPORT (Below 900px) */
+@media (max-width: 900px) {
+  /* Shrink button padding and fonts slightly to buy more space */
+  button {
+    padding: 6px 10px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .tool-btn .icon {
+    font-size: 14px;
+  }
+
+  .tool-input {
+    width: 36px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  /* Allow the top toolbar to wrap if it runs out of horizontal space */
+  #toolbar {
+    width: 95%;
+    flex-wrap: wrap;
+    justify-content: center;
+    top: 10px;
+  }
+
+  /* Center the bottom action bar so it doesn't collide with mobile edges */
+  #actionbar {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 10px;
+    width: max-content;
+    max-width: 95%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+/* MOBILE VIEWPORT (Below 600px) */
+@media (max-width: 600px) {
+  /* Hide the text labels on the primary tools, relying purely on the icons */
+  .tool-btn .label {
+    display: none;
+  }
+
+  /* Shift the dynamic properties panel down so it doesn't overlap the wrapped toolbar */
+  #dynamic-properties-panel {
+    top: 120px !important;
+    right: 10px !important;
+    width: 180px !important;
+  }
+
+  /* Compress the settings modal for mobile screens */
+  .modal-content {
+    padding: 16px;
+    width: 95%;
+  }
+
+  .binding-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .key-cap {
+    align-self: flex-start;
+    width: 100%;
+  }
+}

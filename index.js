@@ -1,3 +1,28 @@
+import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
+import { HalfEdge, Face, isPointInFace, buildDCEL } from "./DCEL.js";
+import { GeometryChangeCommand, CommandHistory } from "./command_pattern.js";
+import { UI } from "./ui.js";
+import { triangulatePolygonPerimeter } from "./triangulation.js";
+import { loadEditorStateFromStorage } from "./state_persistence.js";
+
+import {
+  snapPoint,
+  findEdgeAt,
+  findVertexAt,
+  worldFromMouse,
+  computeStateAfterEdges,
+  isPointInSelectionBounds,
+} from "./geometry_and_intersection.js";
+
+import {
+  getV,
+  Edge,
+  Vertex,
+  getOrCreateVertexInPool,
+} from "./relational_data_architecture.js";
+
+let currentTool = TOOLS.LINE;
+let keyBindings = { ...DEFAULT_KEY_BINDINGS };
 // =========================
 // CANVAS SETUP & WORLD
 // =========================
@@ -17,100 +42,12 @@ const SNAP = 10;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20.0;
 
-// =========================
-// ENUMS & ACTIONS
-// =========================
-const TOOLS = {
-  ROOM: "room",
-  LINE: "line",
-  NGON: "ngon",
-  ZOOM: "zoom",
-  DRAG: "drag",
-  SPLIT: "split",
-};
-let currentTool = TOOLS.LINE;
-
-const ACTIONS = {
-  UNDO: "undo",
-  REDO: "redo",
-
-  SELECT_ALL: "select_all",
-
-  SET_TOOL_LINE: "set_tool_line",
-  SET_TOOL_NGON: "set_tool_ngon",
-  SET_TOOL_ZOOM: "set_tool_zoom",
-  SET_TOOL_DRAG: "set_tool_drag",
-  SET_TOOL_SPLIT: "set_tool_split",
-
-  PAN_UP: "pan_up",
-  PAN_DOWN: "pan_down",
-  PAN_LEFT: "pan_left",
-  PAN_RIGHT: "pan_right",
-
-  DELETE_SELECTION: "delete_selection",
-  ROTATE_SELECTION: "rotate_selection",
-};
-
-const DEFAULT_KEY_BINDINGS = {
-  "Ctrl+KeyZ": ACTIONS.UNDO,
-  "Ctrl+KeyY": ACTIONS.REDO,
-  "Ctrl+KeyA": ACTIONS.SELECT_ALL,
-
-  KeyR: ACTIONS.ROTATE_SELECTION,
-
-  Digit1: ACTIONS.SET_TOOL_LINE,
-  Digit2: ACTIONS.SET_TOOL_SPLIT,
-  Digit3: ACTIONS.SET_TOOL_NGON,
-  Digit4: ACTIONS.SET_TOOL_ZOOM,
-  Digit5: ACTIONS.SET_TOOL_DRAG,
-
-  // Arrow fallbacks for precise canvas movement panning
-  ArrowUp: ACTIONS.PAN_UP,
-  ArrowDown: ACTIONS.PAN_DOWN,
-  ArrowLeft: ACTIONS.PAN_LEFT,
-  ArrowRight: ACTIONS.PAN_RIGHT,
-
-  Delete: ACTIONS.DELETE_SELECTION,
-};
-let keyBindings = { ...DEFAULT_KEY_BINDINGS };
-
-// =========================
-// CORE RELATIONAL DATA ARCHITECTURE
-// =========================
-/**
- * @typedef {`${string}-${string}-${string}-${string}-${string}`} UUID
- */
-class Vertex {
-  /**
-   * @param {number} x
-   * @param {number} y
-   * @param {UUID | null} [id = null]
-   */
-  constructor(x, y, id = null) {
-    /** @type {UUID} */
-    this.id = id || crypto.randomUUID();
-    /** @type {number} */
-    this.x = x;
-    /** @type {number} */
-    this.y = y;
-  }
-}
-
-class Edge {
-  /**
-   * @param {UUID} v1Id
-   * @param {UUID} v2Id
-   * @param {UUID | null} [id = null]
-   */
-  constructor(v1Id, v2Id, id = null) {
-    /** @type {UUID} */
-    this.id = id || crypto.randomUUID();
-    /** @type {UUID} */
-    this.v1Id = v1Id;
-    /** @type {UUID} */
-    this.v2Id = v2Id;
-  }
-}
+window.addEventListener("resize", () => {
+  SCREEN_WIDTH = Math.floor(window.innerWidth * 0.99);
+  SCREEN_HEIGHT = Math.floor(window.innerHeight * 0.99);
+  canvas.width = SCREEN_WIDTH;
+  canvas.height = SCREEN_HEIGHT;
+});
 
 /** @type {Vertex[]} */
 let vertices = [];
@@ -118,104 +55,6 @@ let vertices = [];
 let edges = [];
 /** @type {Set<Vertex>} */
 let selectedVertices = new Set();
-
-/**
- * @param {UUID} id
- */
-const getV = (id) => vertices.find((v) => v.id === id);
-
-/**
- * @param {Vertex[]} vPool
- * @param {number} x
- * @param {number} y
- */
-function getOrCreateVertexInPool(vPool, x, y) {
-  const existing = vPool.find((v) => Math.hypot(v.x - x, v.y - y) < 0.001);
-  if (existing) return existing.id;
-  const newV = new Vertex(x, y);
-  vPool.push(newV);
-  return newV.id;
-}
-
-/**
- * @param {Vertex[]} vertexPool
- * @param {Edge[]} edgePool
- */
-function buildAdjacencyMap(vertexPool, edgePool) {
-  /** @type {Map<UUID, UUID>} */
-  const adjacency = new Map();
-  vertexPool.forEach((v) => adjacency.set(v.id, []));
-
-  edgePool.forEach((edge) => {
-    if (adjacency.has(edge.v1Id)) adjacency.get(edge.v1Id).push(edge.id);
-    if (adjacency.has(edge.v2Id)) adjacency.get(edge.v2Id).push(edge.id);
-  });
-
-  adjacency.forEach((connectedEdgeIds, centerVId) => {
-    const centerV = vertexPool.find((v) => v.id === centerVId);
-    connectedEdgeIds.sort((idA, idB) => {
-      const edgeA = edgePool.find((e) => e.id === idA);
-      const edgeB = edgePool.find((e) => e.id === idB);
-
-      const targetAId = edgeA.v1Id === centerVId ? edgeA.v2Id : edgeA.v1Id;
-      const targetA = vertexPool.find((v) => v.id === targetAId);
-      const angleA = Math.atan2(targetA.y - centerV.y, targetA.x - centerV.x);
-
-      const targetBId = edgeB.v1Id === centerVId ? edgeB.v2Id : edgeB.v1Id;
-      const targetB = vertexPool.find((v) => v.id === targetBId);
-      const angleB = Math.atan2(targetB.y - centerV.y, targetB.x - centerV.x);
-
-      return angleA - angleB;
-    });
-  });
-  return adjacency;
-}
-
-// =========================
-// DCEL DATA STRUCTURES & EXTRACTOR
-// =========================
-class HalfEdge {
-  /**
-   * @param {Edge} edge
-   * @param {UUID} originId
-   */
-  constructor(edge, originId) {
-    /** @type {UUID} */
-    this.id = crypto.randomUUID();
-    /** @type {Edge} */
-    this.edge = edge;
-    /** @type {UUID} */
-    this.originId = originId;
-
-    /** @type {HalfEdge | null} */
-    this.twin = null;
-    /** @type {HalfEdge | null} */
-    this.next = null;
-    /** @type {HalfEdge | null} */
-    this.prev = null;
-    /** @type {HalfEdge | null} */
-    this.face = null;
-  }
-}
-
-class Face {
-  constructor() {
-    /** @type {UUID} */
-    this.id = crypto.randomUUID();
-    /** @type {HalfEdge | null} */
-    this.outerComponent = null;
-
-    // 3D Engine Properties
-    /** @type {number} */
-    this.floorHeight = 0;
-    /** @type {number} */
-    this.ceilHeight = 64;
-    /** @type {string} */
-    this.floorColor = "#555555";
-    /** @type {string} */
-    this.ceilColor = "#888888";
-  }
-}
 
 // Add a global tracking variable near your other state variables
 let selectedFaceId = null;
@@ -225,353 +64,16 @@ let halfEdges = [];
 /** @type {Face[]} */
 let faces = [];
 
-/**
- * @param {[number, number]} p
- * @param {Face} face
- */
-function isPointInFace(p, face) {
-  let x = p[0],
-    y = p[1];
-  let inside = false;
-
-  let curr = face.outerComponent;
-  if (!curr) return false;
-
-  do {
-    let v1 = getV(curr.originId);
-    let v2 = getV(curr.next.originId); // The destination of this half-edge
-
-    // Ray-Casting algorithm core logic
-    let intersect =
-      v1.y > y !== v2.y > y &&
-      x < ((v2.x - v1.x) * (y - v1.y)) / (v2.y - v1.y) + v1.x;
-
-    if (intersect) inside = !inside;
-
-    curr = curr.next;
-  } while (curr && curr !== face.outerComponent);
-
-  return inside;
-}
-
-function buildDCEL() {
-  /** @type {HalfEdge[]} */
-  halfEdges = [];
-  /** @type {Face[]} */
-  faces = [];
-
-  // 1. Generate Twins
-  edges.forEach((edge) => {
-    const fHalf = new HalfEdge(edge, edge.v1Id);
-    const bHalf = new HalfEdge(edge, edge.v2Id);
-    fHalf.twin = bHalf;
-    bHalf.twin = fHalf;
-    halfEdges.push(fHalf, bHalf);
-  });
-
-  // 2. Wire Next/Prev via Adjacency Map
-  const adjacencyMap = buildAdjacencyMap(vertices, edges);
-  adjacencyMap.forEach((connectedEdgeIds, centerVertexId) => {
-    const N = connectedEdgeIds.length;
-    if (N === 0) return;
-
-    for (let i = 0; i < N; i++) {
-      const currentEdgeId = connectedEdgeIds[i];
-      const prevIndex = (i + 1) % N;
-      const prevEdgeId = connectedEdgeIds[prevIndex];
-
-      // INBOUND LANE: Belongs to currentEdgeId, and its destination is centerVertexId
-      // (Destination is proven because its twin starts at centerVertexId)
-      let inboundHalfEdge = halfEdges.find(
-        (he) =>
-          he.edge.id === currentEdgeId && he.twin.originId === centerVertexId,
-      );
-
-      // OUTBOUND LANE: Belongs to prevEdgeId, and its origin is centerVertexId
-      let outboundHalfEdge = halfEdges.find(
-        (he) => he.edge.id === prevEdgeId && he.originId === centerVertexId,
-      );
-
-      if (inboundHalfEdge && outboundHalfEdge) {
-        inboundHalfEdge.next = outboundHalfEdge;
-        outboundHalfEdge.prev = inboundHalfEdge;
-      }
-    }
-  });
-
-  // 3. Extract Faces
-  /** @type {Set<HalfEdge>} */
-  const visited = new Set();
-
-  halfEdges.forEach((startEdge) => {
-    if (visited.has(startEdge.id) || !startEdge.next) return;
-
-    let currentEdge = startEdge;
-    /** @type {HalfEdge[]} */
-    let loopEdges = [];
-    /** @type {Vertex[]} */
-    let loopVertices = [];
-
-    // Trace the loop
-    do {
-      visited.add(currentEdge.id);
-      loopEdges.push(currentEdge);
-      loopVertices.push(getV(currentEdge.originId));
-      currentEdge = currentEdge.next;
-    } while (
-      currentEdge &&
-      currentEdge !== startEdge &&
-      !visited.has(currentEdge.id)
-    );
-
-    if (!currentEdge || currentEdge !== startEdge) return; // Broken loop (hanging wall)
-
-    // Shoelace Formula to find Area (In Canvas, CCW is negative area)
-    let signedArea = 0;
-    const n = loopVertices.length;
-    for (let i = 0; i < n; i++) {
-      const v1 = loopVertices[i];
-      const v2 = loopVertices[(i + 1) % n];
-      signedArea += v1.x * v2.y - v2.x * v1.y;
-    }
-
-    // Isolate actual rooms from the infinite void
-    if (signedArea < -0.01) {
-      const newFace = new Face();
-      newFace.outerComponent = startEdge;
-      loopEdges.forEach((edge) => (edge.face = newFace));
-      faces.push(newFace);
-    }
-  });
-}
-
 // =========================
 // COMMAND PATTERN ENGINE
 // =========================
-class CommandHistory {
-  constructor() {
-    this.undoStack = [];
-    this.redoStack = [];
-  }
-  execute(command) {
-    command.execute();
-    this.undoStack.push(command);
-    this.redoStack = [];
-    buildDCEL();
-    saveEditorStateToStorage();
-  }
-  undo() {
-    if (this.undoStack.length === 0) return;
-    const cmd = this.undoStack.pop();
-    cmd.undo();
-    this.redoStack.push(cmd);
-    buildDCEL();
-    saveEditorStateToStorage();
-  }
-  redo() {
-    if (this.redoStack.length === 0) return;
-    const cmd = this.redoStack.pop();
-    cmd.execute();
-    this.undoStack.push(cmd);
-    buildDCEL();
-    saveEditorStateToStorage();
-  }
-}
+
 const History = new CommandHistory();
-
-class GeometryChangeCommand {
-  /**
-   *  @param {Vertex[]} newV
-   *  @param {Edge[]} oldE
-   *  @param {Edge[]} newE
-   *  @param {Vertex[]} oldV
-   */
-  constructor(oldV, oldE, newV, newE, oldSel, newSel) {
-    this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
-    this.oldE = oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    this.newV = newV.map((v) => new Vertex(v.x, v.y, v.id));
-    this.newE = newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    this.oldSel = [...oldSel];
-    this.newSel = [...newSel];
-  }
-  execute() {
-    vertices = this.newV.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = this.newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    selectedVertices = new Set(this.newSel);
-  }
-  undo() {
-    vertices = this.oldV.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = this.oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    selectedVertices = new Set(this.oldSel);
-  }
-}
-
-// =========================
-// GEOMETRY & INTERSECTION PIPELINE
-// =========================
-function worldFromMouse(x, y) {
-  return [x / zoom - offsetX, y / zoom - offsetY];
-}
-function snapPoint(p) {
-  return [Math.round(p[0] / SNAP) * SNAP, Math.round(p[1] / SNAP) * SNAP];
-}
-
-function isPointInSelectionBounds(p) {
-  if (selectedVertices.size <= 1) return false;
-
-  let xMin = Infinity,
-    xMax = -Infinity;
-  let yMin = Infinity,
-    yMax = -Infinity;
-
-  selectedVertices.forEach((vid) => {
-    let v = getV(vid);
-    if (v) {
-      xMin = Math.min(xMin, v.x);
-      xMax = Math.max(xMax, v.x);
-      yMin = Math.min(yMin, v.y);
-      yMax = Math.max(yMax, v.y);
-    }
-  });
-
-  // Expand the interaction bounds slightly (e.g., by 6 units) to match the visual padding in render()
-  return (
-    p[0] >= xMin - 6 && p[0] <= xMax + 6 && p[1] >= yMin - 6 && p[1] <= yMax + 6
-  );
-}
-
-function getLineIntersection(vPool, edge1, edge2) {
-  const v1 = vPool.find((v) => v.id === edge1.v1Id),
-    v2 = vPool.find((v) => v.id === edge1.v2Id);
-  const v3 = vPool.find((v) => v.id === edge2.v1Id),
-    v4 = vPool.find((v) => v.id === edge2.v2Id);
-  if (!v1 || !v2 || !v3 || !v4) return null;
-
-  const p0_x = v1.x,
-    p0_y = v1.y,
-    p1_x = v2.x,
-    p1_y = v2.y;
-  const p2_x = v3.x,
-    p2_y = v3.y,
-    p3_x = v4.x,
-    p3_y = v4.y;
-
-  const s1_x = p1_x - p0_x,
-    s1_y = p1_y - p0_y,
-    s2_x = p3_x - p2_x,
-    s2_y = p3_y - p2_y;
-  const denom = -s2_x * s1_y + s1_x * s2_y;
-  if (Math.abs(denom) < 0.0001) return null;
-
-  const s = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / denom;
-  const t = (s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / denom;
-
-  if (s >= 0.001 && s <= 0.999 && t >= 0.001 && t <= 0.999) {
-    return [
-      Math.round((p0_x + t * s1_x) / SNAP) * SNAP,
-      Math.round((p0_y + t * s1_y) / SNAP) * SNAP,
-    ];
-  }
-  return null;
-}
-
-function processSplitting(vPool, ePool, newEdge) {
-  const isDuplicate = ePool.some(
-    (e) =>
-      (e.v1Id === newEdge.v1Id && e.v2Id === newEdge.v2Id) ||
-      (e.v1Id === newEdge.v2Id && e.v2Id === newEdge.v1Id),
-  );
-  if (isDuplicate) return ePool;
-
-  let toRemove = [],
-    toAdd = [],
-    split = false;
-
-  for (let existing of ePool) {
-    let intPt = getLineIntersection(vPool, newEdge, existing);
-    if (intPt) {
-      let matchId = getOrCreateVertexInPool(vPool, intPt[0], intPt[1]);
-      toRemove.push(existing.id, newEdge.id);
-
-      // Generate the 4 new sliced pieces
-      const subEdges = [
-        new Edge(existing.v1Id, matchId),
-        new Edge(matchId, existing.v2Id),
-        new Edge(newEdge.v1Id, matchId),
-        new Edge(matchId, newEdge.v2Id),
-      ];
-
-      subEdges.forEach((e) => {
-        if (e.v1Id !== e.v2Id) toAdd.push(e);
-      });
-
-      split = true;
-      break;
-      break;
-    }
-  }
-  if (split) {
-    let filtered = ePool.filter((e) => !toRemove.includes(e.id));
-    for (let sub of toAdd) filtered = processSplitting(vPool, filtered, sub);
-    return filtered;
-  } else {
-    ePool.push(newEdge);
-    return ePool;
-  }
-}
-
-/**
- * @param {Vertex[]} currentVPool
- * @param {Edge[]} currentEPool
- * @param {Edge[]} newEdgesArray
- */
-function computeStateAfterEdges(currentVPool, currentEPool, newEdgesArray) {
-  let tempV = currentVPool.map((v) => new Vertex(v.x, v.y, v.id));
-  let tempE = currentEPool.filter((e) => e.v1Id !== e.v2Id);
-
-  newEdgesArray.forEach((ne) => {
-    tempE = processSplitting(tempV, tempE, ne);
-  });
-
-  let clearV = tempV.filter((v) =>
-    tempE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
-  );
-  return { newV: clearV, newE: tempE };
-}
-
-function distanceToEdge(p, edge) {
-  let v1 = getV(edge.v1Id),
-    v2 = getV(edge.v2Id);
-  if (!v1 || !v2) return Infinity;
-
-  let x = p[0],
-    y = p[1],
-    x1 = v1.x,
-    y1 = v1.y,
-    x2 = v2.x,
-    y2 = v2.y;
-  let l2 = Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2);
-  if (l2 === 0) return Math.hypot(x - x1, y - y1);
-  let t = Math.max(
-    0,
-    Math.min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / l2),
-  );
-  return Math.hypot(x - (x1 + t * (x2 - x1)), y - (y1 + t * (y2 - y1)));
-}
-
-function findVertexAt(wPos, r = 8 / zoom) {
-  return (
-    vertices.find((v) => Math.hypot(v.x - wPos[0], v.y - wPos[1]) < r) || null
-  );
-}
-function findEdgeAt(wPos, r = 8 / zoom) {
-  return edges.find((e) => distanceToEdge(wPos, e) < r) || null;
-}
 
 // =========================
 // INPUT & KEYBOARD ROUTER
 // =========================
-window.addEventListener("keydown", (e) => {
+canvas.addEventListener("keydown", (e) => {
   let modifierPrefix = "";
   if (e.ctrlKey || e.metaKey) modifierPrefix += "Ctrl+";
 
@@ -581,10 +83,10 @@ window.addEventListener("keydown", (e) => {
 
   switch (action) {
     case ACTIONS.UNDO:
-      History.undo();
+      History.undo(halfEdges, faces, edges, vertices);
       break;
     case ACTIONS.REDO:
-      History.redo();
+      History.redo(halfEdges, faces, edges, vertices);
       break;
     case ACTIONS.SELECT_ALL:
       selectedVertices.clear();
@@ -629,6 +131,11 @@ window.addEventListener("keydown", (e) => {
             nextE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
         );
         History.execute(
+          halfEdges,
+          faces,
+          edges,
+          vertices,
+          selectedVertices,
           new GeometryChangeCommand(
             vertices,
             edges,
@@ -646,7 +153,7 @@ window.addEventListener("keydown", (e) => {
         let cx = 0,
           cy = 0;
         selectedVertices.forEach((vid) => {
-          let v = getV(vid);
+          let v = getV(vertices, vid);
           cx += v.x;
           cy += v.y;
         });
@@ -661,7 +168,7 @@ window.addEventListener("keydown", (e) => {
 
         // Apply mathematical rotation to the live vertices
         selectedVertices.forEach((vid) => {
-          let v = getV(vid);
+          let v = getV(vertices, vid);
           let dx = v.x - cx,
             dy = v.y - cy;
           v.x = cx + dx * Math.cos(angle) - dy * Math.sin(angle);
@@ -681,6 +188,11 @@ window.addEventListener("keydown", (e) => {
 
         let state = computeStateAfterEdges(vertices, staticEdges, movedEdges);
         History.execute(
+          halfEdges,
+          faces,
+          edges,
+          vertices,
+          selectedVertices,
           new GeometryChangeCommand(
             origV,
             origE,
@@ -730,7 +242,7 @@ canvas.addEventListener("mousedown", (e) => {
 
   isMouseDown = true;
   const screen = getMouseCoords(e);
-  const world = worldFromMouse(screen[0], screen[1]);
+  const world = worldFromMouse(offsetX, offsetY, zoom, screen[0], screen[1]);
 
   currentRawMouse = [...world];
   dragLastWorld = [...world];
@@ -742,9 +254,9 @@ canvas.addEventListener("mousedown", (e) => {
   switch (currentTool) {
     case TOOLS.LINE:
       if (e.altKey) return;
-      let hitV = findVertexAt(world);
+      let hitV = findVertexAt(vertices, world, zoom);
       if (!hitV) {
-        let snapped = snapPoint(world);
+        let snapped = snapPoint(world, SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           vertices,
           snapped[0],
@@ -758,7 +270,7 @@ canvas.addEventListener("mousedown", (e) => {
     case TOOLS.NGON:
       if (e.altKey) return;
       if (!currentAnchorId) {
-        let snapped = snapPoint(world);
+        let snapped = snapPoint(world, SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           vertices,
           snapped[0],
@@ -769,9 +281,9 @@ canvas.addEventListener("mousedown", (e) => {
 
     case TOOLS.SPLIT:
       if (e.altKey) return;
-      let hitEdge = findEdgeAt(world);
+      let hitEdge = findEdgeAt(vertices, edges, world, zoom);
       if (hitEdge) {
-        let snapW = snapPoint(world);
+        let snapW = snapPoint(world, SNAP);
         let newVId = getOrCreateVertexInPool(vertices, snapW[0], snapW[1]);
         let nextE = edges.filter((e) => e.id !== hitEdge.id);
         nextE.push(
@@ -780,6 +292,11 @@ canvas.addEventListener("mousedown", (e) => {
         );
         let state = computeStateAfterEdges(vertices, nextE, []);
         History.execute(
+          halfEdges,
+          faces,
+          edges,
+          vertices,
+          selectedVertices,
           new GeometryChangeCommand(
             vertices,
             edges,
@@ -794,8 +311,8 @@ canvas.addEventListener("mousedown", (e) => {
 
     case TOOLS.DRAG:
       if (e.altKey) return;
-      let grabV = findVertexAt(world);
-      let grabE = findEdgeAt(world);
+      let grabV = findVertexAt(vertices, world, zoom);
+      let grabE = findEdgeAt(vertices, edges, world, zoom);
 
       initialDragStateSnapshot = {
         v: vertices.map((v) => new Vertex(v.x, v.y, v.id)),
@@ -850,7 +367,7 @@ canvas.addEventListener("mousedown", (e) => {
 
 canvas.addEventListener("mousemove", (e) => {
   const screen = getMouseCoords(e);
-  const world = worldFromMouse(screen[0], screen[1]);
+  const world = worldFromMouse(offsetX, offsetY, zoom, screen[0], screen[1]);
   currentRawMouse = world;
 
   if (isPanning) {
@@ -864,12 +381,12 @@ canvas.addEventListener("mousemove", (e) => {
 
   // Calculate hover state when just moving the mouse around freely
   if (!isMouseDown) {
-    let hitV = findVertexAt(world);
+    let hitV = findVertexAt(vertices, world, zoom);
     hoveredVertexId = hitV ? hitV.id : null;
 
     // Prioritize vertex hovering over edge hovering
     if (!hoveredVertexId) {
-      let hitE = findEdgeAt(world);
+      let hitE = findEdgeAt(vertices, edges, world, zoom);
       hoveredEdgeId = hitE ? hitE.id : null;
     } else {
       hoveredEdgeId = null;
@@ -884,14 +401,20 @@ canvas.addEventListener("mousemove", (e) => {
       let dx = world[0] - dragLastWorld[0],
         dy = world[1] - dragLastWorld[1];
       selectedVertices.forEach((vid) => {
-        let v = getV(vid);
+        let v = getV(vertices, vid);
         v.x += dx;
         v.y += dy;
       });
       break;
 
     case TOOLS.ZOOM:
-      let zoomCenter = worldFromMouse(canvas.width / 2, canvas.height / 2);
+      let zoomCenter = worldFromMouse(
+        offsetX,
+        offsetY,
+        zoom,
+        canvas.width / 2,
+        canvas.height / 2,
+      );
       zoom =
         e.movementY < 0
           ? Math.min(MAX_ZOOM, zoom * 1.03)
@@ -911,13 +434,13 @@ window.addEventListener("mouseup", (e) => {
 
   if (!isMouseDown) return;
   isMouseDown = false;
-  const snapped = snapPoint(currentRawMouse);
+  const snapped = snapPoint(currentRawMouse, SNAP);
 
   switch (currentTool) {
     case TOOLS.LINE:
       if (currentAnchorId) {
         let endVId;
-        let hitV = findVertexAt(snapped);
+        let hitV = findVertexAt(vertices, snapped, zoom);
         if (hitV) endVId = hitV.id;
         else endVId = getOrCreateVertexInPool(vertices, snapped[0], snapped[1]);
 
@@ -926,6 +449,11 @@ window.addEventListener("mouseup", (e) => {
             new Edge(currentAnchorId, endVId),
           ]);
           History.execute(
+            halfEdges,
+            faces,
+            edges,
+            vertices,
+            selectedVertices,
             new GeometryChangeCommand(
               vertices,
               edges,
@@ -942,7 +470,7 @@ window.addEventListener("mouseup", (e) => {
 
     case TOOLS.NGON:
       if (currentAnchorId) {
-        let anchorV = getV(currentAnchorId);
+        let anchorV = getV(vertices, currentAnchorId);
         let radius = Math.hypot(snapped[0] - anchorV.x, snapped[1] - anchorV.y);
         if (radius > 10) {
           let sidesInput = document.getElementById("ngon-sides").value;
@@ -965,6 +493,11 @@ window.addEventListener("mouseup", (e) => {
           ngonEdges.push(new Edge(prevVId, firstVId));
           let nextState = computeStateAfterEdges(vertices, edges, ngonEdges);
           History.execute(
+            halfEdges,
+            faces,
+            edges,
+            vertices,
+            selectedVertices,
             new GeometryChangeCommand(
               vertices,
               edges,
@@ -993,7 +526,7 @@ window.addEventListener("mouseup", (e) => {
         boxStartWorld = null;
       } else if (initialDragStateSnapshot) {
         selectedVertices.forEach((vid) => {
-          let v = getV(vid);
+          let v = getV(vertices, vid);
           v.x = Math.round(v.x / SNAP) * SNAP;
           v.y = Math.round(v.y / SNAP) * SNAP;
         });
@@ -1014,6 +547,11 @@ window.addEventListener("mouseup", (e) => {
           movedEdges,
         );
         History.execute(
+          halfEdges,
+          faces,
+          edges,
+          vertices,
+          selectedVertices,
           new GeometryChangeCommand(
             initialDragStateSnapshot.v,
             initialDragStateSnapshot.e,
@@ -1027,14 +565,12 @@ window.addEventListener("mouseup", (e) => {
       }
       break;
   }
-
-  // REMOVED ALL GLOBAL RESETS FROM HERE
 });
 
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const screen = getMouseCoords(e);
-  const wM = worldFromMouse(screen[0], screen[1]);
+  const wM = worldFromMouse(offsetX, offsetY, zoom, screen[0], screen[1]);
   zoom =
     e.deltaY < 0
       ? Math.min(MAX_ZOOM, zoom * 1.12)
@@ -1085,7 +621,7 @@ function render() {
     let currEdge = face.outerComponent;
     let first = true;
     do {
-      let v = getV(currEdge.originId);
+      let v = getV(vertices, currEdge.originId);
       if (first) {
         ctx.moveTo(v.x, v.y);
         first = false;
@@ -1114,7 +650,7 @@ function render() {
       let perimeterVertices = [];
       let loopEdge = face.outerComponent;
       do {
-        let v = getV(loopEdge.originId);
+        let v = getV(vertices, loopEdge.originId);
         if (v) perimeterVertices.push(v);
         loopEdge = loopEdge.next;
       } while (loopEdge && loopEdge !== face.outerComponent);
@@ -1141,8 +677,8 @@ function render() {
   });
 
   edges.forEach((edge) => {
-    let v1 = getV(edge.v1Id),
-      v2 = getV(edge.v2Id);
+    let v1 = getV(vertices, edge.v1Id),
+      v2 = getV(vertices, edge.v2Id);
     if (!v1 || !v2) return;
     ctx.beginPath();
     ctx.moveTo(v1.x, v1.y);
@@ -1172,7 +708,7 @@ function render() {
       yMax: -Infinity,
     };
     selectedVertices.forEach((vid) => {
-      let v = getV(vid);
+      let v = getV(vertices, vid);
       bounds.xMin = Math.min(bounds.xMin, v.x);
       bounds.xMax = Math.max(bounds.xMax, v.x);
       bounds.yMin = Math.min(bounds.yMin, v.y);
@@ -1208,9 +744,9 @@ function render() {
     ctx.stroke();
   });
 
-  let snapped = snapPoint(currentRawMouse);
+  let snapped = snapPoint(currentRawMouse, SNAP);
   if (isMouseDown && currentTool === TOOLS.LINE && currentAnchorId) {
-    let vAnchor = getV(currentAnchorId);
+    let vAnchor = getV(vertices, currentAnchorId);
     if (vAnchor) {
       ctx.beginPath();
       ctx.strokeStyle = "#ffd966";
@@ -1224,7 +760,7 @@ function render() {
   }
 
   if (isMouseDown && currentTool === TOOLS.NGON && currentAnchorId) {
-    let vAnchor = getV(currentAnchorId);
+    let vAnchor = getV(vertices, currentAnchorId);
     if (vAnchor) {
       let r = Math.hypot(snapped[0] - vAnchor.x, snapped[1] - vAnchor.y);
       let sidesInput = document.getElementById("ngon-sides").value;
@@ -1273,635 +809,8 @@ function update() {
 requestAnimationFrame(update);
 
 // =========================
-// SERIALIZATION PIPELINE
-// =========================
-function exportMapData() {
-  const TEXTURE_SCALE = 64.0; // Defines tiling scale alignment parameter (e.g. 64 units = 1.0 UV loop)
-
-  const exportSectors = faces.map((f) => {
-    // 1. Trace the closed DCEL loop perimeter to gather the ordered polygon vertices
-    let perimeterVertices = [];
-    let currEdge = f.outerComponent;
-    do {
-      let v = getV(currEdge.originId);
-      if (v) perimeterVertices.push(v);
-      currEdge = currEdge.next;
-    } while (currEdge && currEdge !== f.outerComponent);
-
-    // 2. Generate flat plane triangulation indices
-    const indices2D = triangulatePolygonPerimeter(perimeterVertices);
-
-    // 3. Construct 3D Flooding Mesh Arrays for WebGL processing pipelines
-    let flatFloorTriangles = [];
-    let flatCeilTriangles = [];
-
-    indices2D.forEach(([v1, v2, v3]) => {
-      // Floor Triangle Coordinate Generation Object Map
-      flatFloorTriangles.push({
-        positions: [
-          v1.x,
-          f.floorHeight,
-          v1.y,
-          v2.x,
-          f.floorHeight,
-          v2.y,
-          v3.x,
-          f.floorHeight,
-          v3.y,
-        ],
-        uvs: [
-          v1.x / TEXTURE_SCALE,
-          v1.y / TEXTURE_SCALE,
-          v2.x / TEXTURE_SCALE,
-          v2.y / TEXTURE_SCALE,
-          v3.x / TEXTURE_SCALE,
-          v3.y / TEXTURE_SCALE,
-        ],
-      });
-
-      // Ceiling Triangle Coordinate Generation Object Map (Winding order inverted for downward visibility normals)
-      flatCeilTriangles.push({
-        positions: [
-          v1.x,
-          f.ceilHeight,
-          v1.y,
-          v3.x,
-          f.ceilHeight,
-          v3.y,
-          v2.x,
-          f.ceilHeight,
-          v2.y,
-        ],
-        uvs: [
-          v1.x / TEXTURE_SCALE,
-          v1.y / TEXTURE_SCALE,
-          v3.x / TEXTURE_SCALE,
-          v3.y / TEXTURE_SCALE,
-          v2.x / TEXTURE_SCALE,
-          v2.y / TEXTURE_SCALE,
-        ],
-      });
-    });
-
-    return {
-      id: f.id,
-      floorHeight: f.floorHeight,
-      ceilHeight: f.ceilHeight,
-      floorColor: f.floorColor,
-      ceilColor: f.ceilColor,
-      anchorEdgeId: f.outerComponent?.edge?.id,
-      anchorOriginId: f.outerComponent?.originId,
-      // Extruded 3D Mesh Arrays ready for WebGL Float32Array compilation buffer loads
-      mesh3D: {
-        floorTriangles: flatFloorTriangles,
-        ceilTriangles: flatCeilTriangles,
-      },
-    };
-  });
-
-  const mapData = {
-    version: "1.0",
-    vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-    edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
-    sectors: exportSectors,
-  };
-
-  const dataStr =
-    "data:text/json;charset=utf-8," +
-    encodeURIComponent(JSON.stringify(mapData, null, 2));
-  const downloadAnchor = document.createElement("a");
-  downloadAnchor.setAttribute("href", dataStr);
-  downloadAnchor.setAttribute("download", "orc_map_3d_ready.json");
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
-}
-
-function importMapData(jsonString) {
-  try {
-    const mapData = JSON.parse(jsonString);
-    if (!mapData.vertices || !mapData.edges)
-      throw new Error("Invalid map format");
-
-    vertices = mapData.vertices.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = mapData.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-
-    selectedVertices.clear();
-    selectedFaceId = null;
-    History.undoStack = [];
-    History.redoStack = [];
-
-    buildDCEL();
-
-    if (mapData.sectors) {
-      mapData.sectors.forEach((savedSector) => {
-        const anchorHE = halfEdges.find(
-          (he) =>
-            he.edge.id === savedSector.anchorEdgeId &&
-            he.originId === savedSector.anchorOriginId,
-        );
-        if (anchorHE && anchorHE.face) {
-          const liveFace = anchorHE.face;
-          liveFace.id = savedSector.id;
-          liveFace.floorHeight = savedSector.floorHeight;
-          liveFace.ceilHeight = savedSector.ceilHeight;
-          liveFace.floorColor = savedSector.floorColor;
-          liveFace.ceilColor = savedSector.ceilColor;
-        }
-      });
-    }
-    offsetX = 0;
-    offsetY = 0;
-    zoom = 1.0;
-  } catch (err) {
-    console.error("Map Load Error:", err);
-    alert("Failed to load map.");
-  }
-}
-
-// ==========================================
-// EAR CLIPPING TRIANGULATION GEOMETRY ENGINE
-// ==========================================
-
-/**
- * Uses 2D cross-products to determine if a point sits inside a triangle triangle boundary.
- */
-function isPointInTriangle(p, a, b, c) {
-  const cross = (v1, v2, v3) =>
-    (v2.x - v1.x) * (v3.y - v1.y) - (v2.y - v1.y) * (v3.x - v1.x);
-
-  const hasNeg = cross(a, b, p) < 0 || cross(b, c, p) < 0 || cross(c, a, p) < 0;
-  const hasPos = cross(a, b, p) > 0 || cross(b, c, p) > 0 || cross(c, a, p) > 0;
-
-  return !(hasNeg && hasPos);
-}
-
-/**
- * Slices an ordered counter-clockwise array of perimeter points into an array of triangles.
- * Returns an array of vertex triplets: [[v1, v2, v3], [v1, v2, v3], ...]
- */
-function triangulatePolygonPerimeter(polygonVertices) {
-  // Clean step: Filter out any consecutive duplicate vertices that break vector lines
-  let cleaned = [];
-  for (let i = 0; i < polygonVertices.length; i++) {
-    let currV = polygonVertices[i];
-    let nextV = polygonVertices[(i + 1) % polygonVertices.length];
-    // If next vertex is at the exact same location, skip adding the duplicate segment
-    if (Math.hypot(nextV.x - currV.x, nextV.y - currV.y) > 0.001) {
-      cleaned.push(currV);
-    }
-  }
-
-  let remaining = [...cleaned];
-  let triangles = [];
-
-  // Guard condition for degenerate structures
-  if (remaining.length < 3) return triangles;
-
-  // If it's already a perfect triangle, return it immediately
-  if (remaining.length === 3) {
-    triangles.push([remaining[0], remaining[1], remaining[2]]);
-    return triangles;
-  }
-
-  let safetyCounter = 0;
-  const maxIterations = remaining.length * remaining.length;
-
-  while (remaining.length > 3) {
-    let earFound = false;
-    const n = remaining.length;
-
-    for (let i = 0; i < n; i++) {
-      const prev = remaining[(i - 1 + n) % n];
-      const curr = remaining[i];
-      const next = remaining[(i + 1) % n];
-
-      // Rule 1: Winding Check. Use an epsilon threshold (> 0.001) instead of strict 0
-      // to safely clear floating-point rounding errors on colinear line paths!
-      const crossProduct =
-        (curr.x - prev.x) * (next.y - curr.y) -
-        (curr.y - prev.y) * (next.x - curr.x);
-      if (crossProduct <= 0.001) continue;
-
-      // Rule 2: Point-In-Triangle Check. Ensure no remaining vertices puncture the ear candidate.
-      let isEar = true;
-      for (let j = 0; j < n; j++) {
-        if (j === (i - 1 + n) % n || j === i || j === (i + 1) % n) continue;
-
-        if (isPointInTriangle(remaining[j], prev, curr, next)) {
-          isEar = false;
-          break;
-        }
-      }
-
-      // Snip the ear tip out of the polygon calculation
-      if (isEar) {
-        triangles.push([prev, curr, next]);
-        remaining.splice(i, 1);
-        earFound = true;
-        break;
-      }
-    }
-
-    // Infinite loop escape hatch safety valve
-    safetyCounter++;
-    if (safetyCounter > maxIterations) {
-      break;
-    }
-
-    if (!earFound) {
-      break;
-    }
-  }
-
-  if (remaining.length === 3) {
-    triangles.push([remaining[0], remaining[1], remaining[2]]);
-  }
-
-  return triangles;
-}
-
-// =========================
-// STATE PERSISTENCE ENGINE
-// =========================
-function saveEditorStateToStorage() {
-  const payload = {
-    currentTool: currentTool, // NEW PERSISTENCE PARAMETER
-    geometry: {
-      vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-      edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
-    },
-    sectors: faces.map((f) => ({
-      id: f.id,
-      floorHeight: f.floorHeight,
-      ceilHeight: f.ceilHeight,
-      floorColor: f.floorColor,
-      ceilColor: f.ceilColor,
-      anchorEdgeId: f.outerComponent?.edge?.id,
-      anchorOriginId: f.outerComponent?.originId,
-    })),
-    history: {
-      undo: History.undoStack.map((cmd) => ({
-        oldV: cmd.oldV,
-        oldE: cmd.oldE,
-        newV: cmd.newV,
-        newE: cmd.newE,
-        oldSel: cmd.oldSel,
-        newSel: cmd.newSel,
-      })),
-      redo: History.redoStack.map((cmd) => ({
-        oldV: cmd.oldV,
-        oldE: cmd.oldE,
-        newV: cmd.newV,
-        newE: cmd.newE,
-        oldSel: cmd.oldSel,
-        newSel: cmd.newSel,
-      })),
-    },
-    keyBindings: keyBindings,
-  };
-  localStorage.setItem("orc_engine_editor_state", JSON.stringify(payload));
-}
-
-function loadEditorStateFromStorage() {
-  const raw = localStorage.getItem("orc_engine_editor_state");
-  if (!raw) return false;
-
-  try {
-    const data = JSON.parse(raw);
-
-    // 1. Rehydrate Hotkeys
-    if (data.keyBindings) keyBindings = data.keyBindings;
-
-    // 2. Rehydrate Active Tool Selection State
-    if (data.currentTool) currentTool = data.currentTool;
-
-    // 3. Rehydrate Topology
-    if (data.geometry) {
-      vertices = data.geometry.vertices.map((v) => new Vertex(v.x, v.y, v.id));
-      edges = data.geometry.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    }
-
-    // 4. Rebuild DCEL Mesh
-    buildDCEL();
-
-    // 5. Re-inject Sector 3D parameters
-    if (data.sectors) {
-      data.sectors.forEach((savedSector) => {
-        const anchorHE = halfEdges.find(
-          (he) =>
-            he.edge.id === savedSector.anchorEdgeId &&
-            he.originId === savedSector.anchorOriginId,
-        );
-        if (anchorHE && anchorHE.face) {
-          const face = anchorHE.face;
-          face.id = savedSector.id;
-          face.floorHeight = savedSector.floorHeight;
-          face.ceilHeight = savedSector.ceilHeight;
-          face.floorColor = savedSector.floorColor;
-          face.ceilColor = savedSector.ceilColor;
-        }
-      });
-    }
-
-    // 6. Reconstruct Command History Objects
-    if (data.history) {
-      History.undoStack = data.history.undo.map(
-        (h) =>
-          new GeometryChangeCommand(
-            h.oldV,
-            h.oldE,
-            h.newV,
-            h.newE,
-            h.oldSel,
-            h.newSel,
-          ),
-      );
-      History.redoStack = data.history.redo.map(
-        (h) =>
-          new GeometryChangeCommand(
-            h.oldV,
-            h.oldE,
-            h.newV,
-            h.newE,
-            h.oldSel,
-            h.newSel,
-          ),
-      );
-    }
-
-    return true;
-  } catch (err) {
-    console.warn("Auto-load failed, clearing corrupted fallback space:", err);
-    localStorage.removeItem("orc_engine_editor_state");
-    return false;
-  }
-}
-
-// =========================
 // DYNAMIC UI COMPONENT ENGINE
 // =========================
-class UIBuilder {
-  static createForm(container, targetObj, schema, onChange) {
-    container.innerHTML = "";
-    if (!targetObj) return;
-
-    schema.forEach((field) => {
-      const row = document.createElement("div");
-      row.className = "prop-row";
-
-      const label = document.createElement("label");
-      label.textContent = field.label;
-      row.appendChild(label);
-
-      let input;
-      switch (field.type) {
-        case "number":
-          input = document.createElement("input");
-          input.type = "number";
-          input.className = "tool-input";
-          input.value = targetObj[field.key];
-          input.addEventListener("input", (e) => {
-            targetObj[field.key] = parseFloat(e.target.value) || 0;
-            if (onChange) onChange(field.key, targetObj[field.key]);
-            saveEditorStateToStorage();
-          });
-          break;
-
-        case "color":
-          input = document.createElement("input");
-          input.type = "color";
-          input.style.cssText =
-            "background: transparent; border: none; cursor: pointer;";
-          input.value = targetObj[field.key];
-          input.addEventListener("input", (e) => {
-            targetObj[field.key] = e.target.value;
-            if (onChange) onChange(field.key, targetObj[field.key]);
-            saveEditorStateToStorage();
-          });
-          break;
-      }
-
-      if (input) row.appendChild(input);
-      container.appendChild(row);
-    });
-  }
-}
-
-const roomSchema = [
-  { label: "Floor Height", key: "floorHeight", type: "number" },
-  { label: "Ceil Height", key: "ceilHeight", type: "number" },
-  { label: "Floor Color", key: "floorColor", type: "color" },
-  { label: "Ceil Color", key: "ceilColor", type: "color" },
-];
-
-// =========================
-// MAIN UI SYSTEM CONTROL
-// =========================
-const UI = {
-  toolButtons: document.querySelectorAll(".tool-btn"),
-  undoBtn: document.getElementById("btn-undo"),
-  redoBtn: document.getElementById("btn-redo"),
-  rotateBtn: document.getElementById("btn-rotate"),
-  deleteBtn: document.getElementById("btn-delete"),
-  settingsBtn: document.getElementById("btn-settings"),
-  settingsModal: document.getElementById("settings-modal"),
-  closeSettingsBtn: document.getElementById("close-settings"),
-  bindingsContainer: document.getElementById("bindings-container"),
-  resetBindingsBtn: document.getElementById("btn-reset-bindings"),
-
-  propertiesPanel: document.getElementById("dynamic-properties-panel"),
-  propertiesContent: document.getElementById("panel-content"),
-
-  activeListeningRow: null,
-
-  propertiesPanel: document.getElementById("dynamic-properties-panel"),
-  propertiesContent: document.getElementById("panel-content"),
-  toggleTrianglesBtn: document.getElementById("btn-toggle-triangles"), // Add reference
-
-  init() {
-    this.toolButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const targetTool = btn.getAttribute("data-tool");
-        if (targetTool) {
-          currentTool = TOOLS[targetTool.toUpperCase()];
-          this.updateToolUI();
-          this.updatePropertiesPanel();
-          saveEditorStateToStorage();
-        }
-      });
-    });
-
-    this.undoBtn.addEventListener("click", () => {
-      History.undo();
-      this.updatePropertiesPanel();
-    });
-    this.redoBtn.addEventListener("click", () => {
-      History.redo();
-      this.updatePropertiesPanel();
-    });
-    this.deleteBtn.addEventListener("click", () =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { code: "Delete" })),
-    );
-    this.rotateBtn.addEventListener("click", () =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyR" })),
-    );
-    this.toggleTrianglesBtn.addEventListener("click", () => {
-      showTriangulationWireframes = !showTriangulationWireframes;
-      if (showTriangulationWireframes) {
-        this.toggleTrianglesBtn.textContent = "📐 Triangles: On";
-        this.toggleTrianglesBtn.style.color = "#ffaa00"; // Orange highlight when active
-      } else {
-        this.toggleTrianglesBtn.textContent = "📐 Triangles: Off";
-        this.toggleTrianglesBtn.style.color = "";
-      }
-    });
-
-    this.settingsBtn.addEventListener("click", () => this.openModal());
-    this.closeSettingsBtn.addEventListener("click", () => this.closeModal());
-    this.settingsModal.addEventListener("click", (e) => {
-      if (e.target === this.settingsModal) this.closeModal();
-    });
-
-    this.resetBindingsBtn.addEventListener("click", () => {
-      keyBindings = { ...DEFAULT_KEY_BINDINGS };
-      this.populateBindingsUI();
-    });
-
-    // Serialization Hooks
-    document
-      .getElementById("btn-export")
-      .addEventListener("click", () => exportMapData());
-    const fileImport = document.getElementById("file-import");
-    document
-      .getElementById("btn-import")
-      .addEventListener("click", () => fileImport.click());
-    fileImport.addEventListener("change", (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        importMapData(evt.target.result);
-        this.updateToolUI();
-      };
-      reader.readAsText(file);
-      e.target.value = "";
-    });
-
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if (this.activeListeningRow) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this.handleRemapCapture(e);
-          return;
-        }
-        this.updateToolUI();
-        this.updatePropertiesPanel();
-      },
-      true,
-    );
-
-    this.updateToolUI();
-  },
-
-  openModal() {
-    this.settingsModal.classList.remove("hidden");
-    this.populateBindingsUI();
-  },
-  closeModal() {
-    this.settingsModal.classList.add("hidden");
-    this.activeListeningRow = null;
-  },
-
-  updatePropertiesPanel() {
-    if (currentTool === TOOLS.ROOM && selectedFaceId) {
-      const selectedFace = faces.find((f) => f.id === selectedFaceId);
-      if (selectedFace) {
-        this.propertiesPanel.classList.remove("hidden");
-        UIBuilder.createForm(this.propertiesContent, selectedFace, roomSchema);
-        return;
-      }
-    }
-    this.propertiesPanel.classList.add("hidden");
-    this.propertiesContent.innerHTML = "";
-  },
-
-  populateBindingsUI() {
-    this.bindingsContainer.innerHTML = "";
-    this.activeListeningRow = null;
-    Object.values(ACTIONS).forEach((action) => {
-      const row = document.createElement("div");
-      row.className = "binding-row";
-      const label = document.createElement("div");
-      label.className = "binding-label";
-      label.textContent = action.replace(/_/g, " ");
-
-      const keyCap = document.createElement("div");
-      keyCap.className = "key-cap";
-      const assignedKeys = Object.keys(keyBindings).filter(
-        (k) => keyBindings[k] === action,
-      );
-      keyCap.textContent =
-        assignedKeys.length > 0 ? assignedKeys.join(" / ") : "[ None ]";
-
-      keyCap.addEventListener("click", () => {
-        if (this.activeListeningRow)
-          this.activeListeningRow.classList.remove("listening");
-        this.activeListeningRow = keyCap;
-        keyCap.className = "key-cap listening";
-        keyCap.textContent = "Press Key...";
-      });
-
-      keyCap.setAttribute("data-action", action);
-      row.appendChild(label);
-      row.appendChild(keyCap);
-      this.bindingsContainer.appendChild(row);
-    });
-  },
-
-  handleRemapCapture(e) {
-    if (!this.activeListeningRow) return;
-    const actionTarget = this.activeListeningRow.getAttribute("data-action");
-    if (
-      [
-        "ControlLeft",
-        "ControlRight",
-        "ShiftLeft",
-        "ShiftRight",
-        "AltLeft",
-        "AltRight",
-        "MetaLeft",
-      ].includes(e.code)
-    )
-      return;
-
-    let prefix = "";
-    if (e.ctrlKey || e.metaKey) prefix += "Ctrl+";
-    const proposedCombo = prefix + e.code;
-
-    delete keyBindings[proposedCombo];
-    Object.keys(keyBindings).forEach((k) => {
-      if (keyBindings[k] === actionTarget) delete keyBindings[k];
-    });
-    keyBindings[proposedCombo] = actionTarget;
-    this.populateBindingsUI();
-    saveEditorStateToStorage();
-  },
-
-  updateToolUI() {
-    this.toolButtons.forEach((btn) => {
-      const btnTool = btn.getAttribute("data-tool");
-      // Clean, bulletproof string verification matching currentTool
-      if (btnTool && btnTool === currentTool) {
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("active");
-      }
-    });
-  },
-};
 
 UI.init();
 
@@ -1912,5 +821,5 @@ if (hydrated) {
   UI.updateToolUI();
   UI.updatePropertiesPanel();
 } else {
-  buildDCEL();
+  buildDCEL(halfEdges, faces, edges, vertices);
 }
