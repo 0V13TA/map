@@ -1,28 +1,29 @@
 // =========================
 // SERIALIZATION PIPELINE
 // =========================
-export function exportMapData() {
-  const TEXTURE_SCALE = 64.0; // Defines tiling scale alignment parameter (e.g. 64 units = 1.0 UV loop)
+import { State } from "./state_persistence.js";
+import { getV, Vertex, Edge } from "./relational_data_architecture.js";
+import { triangulatePolygonPerimeter } from "./triangulation.js";
+import { buildDCEL } from "./DCEL.js";
 
-  const exportSectors = faces.map((f) => {
-    // 1. Trace the closed DCEL loop perimeter to gather the ordered polygon vertices
+export function exportMapData() {
+  const TEXTURE_SCALE = 64.0;
+
+  const exportSectors = State.faces.map((f) => {
     let perimeterVertices = [];
     let currEdge = f.outerComponent;
     do {
-      let v = getV(vertices, currEdge.originId);
+      let v = getV(State.vertices, currEdge.originId);
       if (v) perimeterVertices.push(v);
       currEdge = currEdge.next;
     } while (currEdge && currEdge !== f.outerComponent);
 
-    // 2. Generate flat plane triangulation indices
     const indices2D = triangulatePolygonPerimeter(perimeterVertices);
 
-    // 3. Construct 3D Flooding Mesh Arrays for WebGL processing pipelines
     let flatFloorTriangles = [];
     let flatCeilTriangles = [];
 
     indices2D.forEach(([v1, v2, v3]) => {
-      // Floor Triangle Coordinate Generation Object Map
       flatFloorTriangles.push({
         positions: [
           v1.x,
@@ -44,8 +45,6 @@ export function exportMapData() {
           v3.y / TEXTURE_SCALE,
         ],
       });
-
-      // Ceiling Triangle Coordinate Generation Object Map (Winding order inverted for downward visibility normals)
       flatCeilTriangles.push({
         positions: [
           v1.x,
@@ -77,7 +76,6 @@ export function exportMapData() {
       ceilColor: f.ceilColor,
       anchorEdgeId: f.outerComponent?.edge?.id,
       anchorOriginId: f.outerComponent?.originId,
-      // Extruded 3D Mesh Arrays ready for WebGL Float32Array compilation buffer loads
       mesh3D: {
         floorTriangles: flatFloorTriangles,
         ceilTriangles: flatCeilTriangles,
@@ -87,8 +85,8 @@ export function exportMapData() {
 
   const mapData = {
     version: "1.0",
-    vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-    edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+    vertices: State.vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
+    edges: State.edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
     sectors: exportSectors,
   };
 
@@ -109,19 +107,19 @@ export function importMapData(jsonString) {
     if (!mapData.vertices || !mapData.edges)
       throw new Error("Invalid map format");
 
-    vertices = mapData.vertices.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = mapData.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.vertices = mapData.vertices.map((v) => new Vertex(v.x, v.y, v.id));
+    State.edges = mapData.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
 
-    selectedVertices.clear();
-    selectedFaceId = null;
-    History.undoStack = [];
-    History.redoStack = [];
+    State.selectedVertices.clear();
+    State.selectedFaceId = null;
+    State.History.undoStack = [];
+    State.History.redoStack = [];
 
-    buildDCEL(halfEdges, faces, edges, vertices);
+    buildDCEL();
 
     if (mapData.sectors) {
       mapData.sectors.forEach((savedSector) => {
-        const anchorHE = halfEdges.find(
+        const anchorHE = State.halfEdges.find(
           (he) =>
             he.edge.id === savedSector.anchorEdgeId &&
             he.originId === savedSector.anchorOriginId,
@@ -136,9 +134,9 @@ export function importMapData(jsonString) {
         }
       });
     }
-    offsetX = 0;
-    offsetY = 0;
-    zoom = 1.0;
+    State.offsetX = 0;
+    State.offsetY = 0;
+    State.zoom = 1.0;
   } catch (err) {
     console.error("Map Load Error:", err);
     alert("Failed to load map.");

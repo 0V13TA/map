@@ -1,3 +1,7 @@
+import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
+import { State, saveEditorStateToStorage } from "./state_persistence.js";
+import { exportMapData, importMapData } from "./serialization.js";
+
 export class UIBuilder {
   static createForm(container, targetObj, schema, onChange) {
     container.innerHTML = "";
@@ -38,7 +42,6 @@ export class UIBuilder {
           });
           break;
       }
-
       if (input) row.appendChild(input);
       container.appendChild(row);
     });
@@ -52,9 +55,6 @@ const roomSchema = [
   { label: "Ceil Color", key: "ceilColor", type: "color" },
 ];
 
-// =========================
-// MAIN UI SYSTEM CONTROL
-// =========================
 export const UI = {
   toolButtons: document.querySelectorAll(".tool-btn"),
   undoBtn: document.getElementById("btn-undo"),
@@ -66,22 +66,17 @@ export const UI = {
   closeSettingsBtn: document.getElementById("close-settings"),
   bindingsContainer: document.getElementById("bindings-container"),
   resetBindingsBtn: document.getElementById("btn-reset-bindings"),
-
   propertiesPanel: document.getElementById("dynamic-properties-panel"),
   propertiesContent: document.getElementById("panel-content"),
-
+  toggleTrianglesBtn: document.getElementById("btn-toggle-triangles"),
   activeListeningRow: null,
-
-  propertiesPanel: document.getElementById("dynamic-properties-panel"),
-  propertiesContent: document.getElementById("panel-content"),
-  toggleTrianglesBtn: document.getElementById("btn-toggle-triangles"), // Add reference
 
   init() {
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const targetTool = btn.getAttribute("data-tool");
         if (targetTool) {
-          currentTool = TOOLS[targetTool.toUpperCase()];
+          State.currentTool = TOOLS[targetTool.toUpperCase()];
           this.updateToolUI();
           this.updatePropertiesPanel();
           saveEditorStateToStorage();
@@ -90,24 +85,36 @@ export const UI = {
     });
 
     this.undoBtn.addEventListener("click", () => {
-      History.undo(halfEdges, faces, edges, vertices);
+      State.History.undo();
       this.updatePropertiesPanel();
     });
     this.redoBtn.addEventListener("click", () => {
-      History.redo(halfEdges, faces, edges, vertices);
+      State.History.redo();
       this.updatePropertiesPanel();
     });
-    this.deleteBtn.addEventListener("click", () =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { code: "Delete" })),
-    );
-    this.rotateBtn.addEventListener("click", () =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyR" })),
-    );
+
+    // Change these from window.dispatchEvent to target the canvas directly
+    this.deleteBtn.addEventListener("click", () => {
+      const cvs = document.querySelector("canvas");
+      if (cvs)
+        cvs.dispatchEvent(
+          new KeyboardEvent("keydown", { code: "Delete", bubbles: true }),
+        );
+    });
+
+    this.rotateBtn.addEventListener("click", () => {
+      const cvs = document.querySelector("canvas");
+      if (cvs)
+        cvs.dispatchEvent(
+          new KeyboardEvent("keydown", { code: "KeyR", bubbles: true }),
+        );
+    });
+
     this.toggleTrianglesBtn.addEventListener("click", () => {
-      showTriangulationWireframes = !showTriangulationWireframes;
-      if (showTriangulationWireframes) {
+      State.showTriangulationWireframes = !State.showTriangulationWireframes;
+      if (State.showTriangulationWireframes) {
         this.toggleTrianglesBtn.textContent = "📐 Triangles: On";
-        this.toggleTrianglesBtn.style.color = "#ffaa00"; // Orange highlight when active
+        this.toggleTrianglesBtn.style.color = "#ffaa00";
       } else {
         this.toggleTrianglesBtn.textContent = "📐 Triangles: Off";
         this.toggleTrianglesBtn.style.color = "";
@@ -121,11 +128,10 @@ export const UI = {
     });
 
     this.resetBindingsBtn.addEventListener("click", () => {
-      keyBindings = { ...DEFAULT_KEY_BINDINGS };
+      State.keyBindings = { ...DEFAULT_KEY_BINDINGS };
       this.populateBindingsUI();
     });
 
-    // Serialization Hooks
     document
       .getElementById("btn-export")
       .addEventListener("click", () => exportMapData());
@@ -173,8 +179,10 @@ export const UI = {
   },
 
   updatePropertiesPanel() {
-    if (currentTool === TOOLS.ROOM && selectedFaceId) {
-      const selectedFace = faces.find((f) => f.id === selectedFaceId);
+    if (State.currentTool === TOOLS.ROOM && State.selectedFaceId) {
+      const selectedFace = State.faces.find(
+        (f) => f.id === State.selectedFaceId,
+      );
       if (selectedFace) {
         this.propertiesPanel.classList.remove("hidden");
         UIBuilder.createForm(this.propertiesContent, selectedFace, roomSchema);
@@ -197,8 +205,8 @@ export const UI = {
 
       const keyCap = document.createElement("div");
       keyCap.className = "key-cap";
-      const assignedKeys = Object.keys(keyBindings).filter(
-        (k) => keyBindings[k] === action,
+      const assignedKeys = Object.keys(State.keyBindings).filter(
+        (k) => State.keyBindings[k] === action,
       );
       keyCap.textContent =
         assignedKeys.length > 0 ? assignedKeys.join(" / ") : "[ None ]";
@@ -238,11 +246,11 @@ export const UI = {
     if (e.ctrlKey || e.metaKey) prefix += "Ctrl+";
     const proposedCombo = prefix + e.code;
 
-    delete keyBindings[proposedCombo];
-    Object.keys(keyBindings).forEach((k) => {
-      if (keyBindings[k] === actionTarget) delete keyBindings[k];
+    delete State.keyBindings[proposedCombo];
+    Object.keys(State.keyBindings).forEach((k) => {
+      if (State.keyBindings[k] === actionTarget) delete State.keyBindings[k];
     });
-    keyBindings[proposedCombo] = actionTarget;
+    State.keyBindings[proposedCombo] = actionTarget;
     this.populateBindingsUI();
     saveEditorStateToStorage();
   },
@@ -250,8 +258,7 @@ export const UI = {
   updateToolUI() {
     this.toolButtons.forEach((btn) => {
       const btnTool = btn.getAttribute("data-tool");
-      // Clean, bulletproof string verification matching currentTool
-      if (btnTool && btnTool === currentTool) {
+      if (btnTool && btnTool === State.currentTool) {
         btn.classList.add("active");
       } else {
         btn.classList.remove("active");

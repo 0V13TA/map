@@ -1,34 +1,41 @@
-// =========================
+import { TOOLS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
+import { Vertex, Edge } from "./relational_data_architecture.js";
+import { buildDCEL } from "./DCEL.js";
+import { GeometryChangeCommand } from "./command_pattern.js";
+
+// ==========================================
+// CENTRAL STATE MANAGER
+// ==========================================
+export const State = {
+  vertices: [],
+  edges: [],
+  faces: [],
+  halfEdges: [],
+  selectedVertices: new Set(),
+  selectedFaceId: null,
+
+  currentTool: TOOLS.LINE,
+  keyBindings: { ...DEFAULT_KEY_BINDINGS },
+
+  zoom: 1.0,
+  offsetX: 0,
+  offsetY: 0,
+  showTriangulationWireframes: false,
+
+  History: null, // Injected at boot by index.js
+};
+
+// ==========================================
 // STATE PERSISTENCE ENGINE
-// =========================
-
-import { Face, HalfEdge } from "./DCEL.js";
-import { CommandHistory } from "./command_pattern.js";
-import { Edge, Vertex } from "./relational_data_architecture.js";
-
-/**
- * @param {Edge[]} edges
- * @param {Vertex[]} vertices
- * @param {Face[]} faces
- * @param {*} currentTool
- * @param {*} keyBindings
- * @param {CommandHistory} History
- */
-export function saveEditorStateToStorage(
-  currentTool,
-  vertices,
-  edges,
-  faces,
-  keyBindings,
-  History,
-) {
+// ==========================================
+export function saveEditorStateToStorage() {
   const payload = {
-    currentTool: currentTool, // NEW PERSISTENCE PARAMETER
+    currentTool: State.currentTool,
     geometry: {
-      vertices: vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-      edges: edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+      vertices: State.vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
+      edges: State.edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
     },
-    sectors: faces.map((f) => ({
+    sectors: State.faces.map((f) => ({
       id: f.id,
       floorHeight: f.floorHeight,
       ceilHeight: f.ceilHeight,
@@ -38,7 +45,7 @@ export function saveEditorStateToStorage(
       anchorOriginId: f.outerComponent?.originId,
     })),
     history: {
-      undo: History.undoStack.map((cmd) => ({
+      undo: State.History.undoStack.map((cmd) => ({
         oldV: cmd.oldV,
         oldE: cmd.oldE,
         newV: cmd.newV,
@@ -46,7 +53,7 @@ export function saveEditorStateToStorage(
         oldSel: cmd.oldSel,
         newSel: cmd.newSel,
       })),
-      redo: History.redoStack.map((cmd) => ({
+      redo: State.History.redoStack.map((cmd) => ({
         oldV: cmd.oldV,
         oldE: cmd.oldE,
         newV: cmd.newV,
@@ -55,50 +62,35 @@ export function saveEditorStateToStorage(
         newSel: cmd.newSel,
       })),
     },
-    keyBindings: keyBindings,
+    keyBindings: State.keyBindings,
   };
   localStorage.setItem("orc_engine_editor_state", JSON.stringify(payload));
 }
 
-/**
- * @param {Face[]} faces
- * @param {Edge[]} edges
- * @param {HalfEdge[]} halfEdges
- * @param {Vertex[]} vertices
- * @param {CommandHistory} History
- */
-export function loadEditorStateFromStorage(
-  halfEdges,
-  faces,
-  edges,
-  vertices,
-  History,
-) {
+export function loadEditorStateFromStorage() {
   const raw = localStorage.getItem("orc_engine_editor_state");
   if (!raw) return false;
 
   try {
     const data = JSON.parse(raw);
 
-    // 1. Rehydrate Hotkeys
-    if (data.keyBindings) keyBindings = data.keyBindings;
+    if (data.keyBindings) State.keyBindings = data.keyBindings;
+    if (data.currentTool) State.currentTool = data.currentTool;
 
-    // 2. Rehydrate Active Tool Selection State
-    if (data.currentTool) currentTool = data.currentTool;
-
-    // 3. Rehydrate Topology
     if (data.geometry) {
-      vertices = data.geometry.vertices.map((v) => new Vertex(v.x, v.y, v.id));
-      edges = data.geometry.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+      State.vertices = data.geometry.vertices.map(
+        (v) => new Vertex(v.x, v.y, v.id),
+      );
+      State.edges = data.geometry.edges.map(
+        (e) => new Edge(e.v1Id, e.v2Id, e.id),
+      );
     }
 
-    // 4. Rebuild DCEL Mesh
-    buildDCEL(halfEdges, faces, edges, vertices);
+    buildDCEL();
 
-    // 5. Re-inject Sector 3D parameters
     if (data.sectors) {
       data.sectors.forEach((savedSector) => {
-        const anchorHE = halfEdges.find(
+        const anchorHE = State.halfEdges.find(
           (he) =>
             he.edge.id === savedSector.anchorEdgeId &&
             he.originId === savedSector.anchorOriginId,
@@ -114,9 +106,8 @@ export function loadEditorStateFromStorage(
       });
     }
 
-    // 6. Reconstruct Command History Objects
     if (data.history) {
-      History.undoStack = data.history.undo.map(
+      State.History.undoStack = data.history.undo.map(
         (h) =>
           new GeometryChangeCommand(
             h.oldV,
@@ -127,7 +118,7 @@ export function loadEditorStateFromStorage(
             h.newSel,
           ),
       );
-      History.redoStack = data.history.redo.map(
+      State.History.redoStack = data.history.redo.map(
         (h) =>
           new GeometryChangeCommand(
             h.oldV,
@@ -139,7 +130,6 @@ export function loadEditorStateFromStorage(
           ),
       );
     }
-
     return true;
   } catch (err) {
     console.warn("Auto-load failed, clearing corrupted fallback space:", err);

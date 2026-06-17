@@ -1,6 +1,6 @@
-import { buildDCEL, Face, HalfEdge } from "./DCEL.js";
+import { buildDCEL } from "./DCEL.js";
 import { Vertex, Edge } from "./relational_data_architecture.js";
-import { saveEditorStateToStorage } from "./state_persistence.js";
+import { saveEditorStateToStorage, State } from "./state_persistence.js";
 
 // =========================
 // COMMAND PATTERN ENGINE
@@ -11,62 +11,34 @@ export class CommandHistory {
     this.redoStack = [];
   }
 
-  /**
-   * @param {Face[]} faces
-   * @param {HalfEdge[]} halfEdges
-   * @param {Edge[]} edges
-   * @param {Vertex[]} vertices
-   * @param {Set<Vertex>} selectedVertices
-   * @param {GeometryChangeCommand} command
-   */
-  execute(halfEdges, faces, edges, vertices, selectedVertices, command) {
-    command.execute(edges, vertices, selectedVertices);
+  execute(command) {
+    command.execute();
     this.undoStack.push(command);
     this.redoStack = [];
-    buildDCEL(halfEdges, faces, edges, vertices);
+    buildDCEL();
     saveEditorStateToStorage();
   }
 
-  /**
-   * @param {Face[]} faces
-   * @param {HalfEdge[]} halfEdges
-   * @param {Edge[]} edges
-   * @param {Vertex[]} vertices
-   */
-  undo(halfEdges, faces, edges, vertices) {
+  undo() {
     if (this.undoStack.length === 0) return;
     const cmd = this.undoStack.pop();
     cmd.undo();
     this.redoStack.push(cmd);
-    buildDCEL(halfEdges, faces, edges, vertices);
+    buildDCEL();
     saveEditorStateToStorage();
   }
 
-  /**
-   * @param {Face[]} faces
-   * @param {HalfEdge[]} halfEdges
-   * @param {Edge[]} edges
-   * @param {Vertex[]} vertices
-   */
-  redo(halfEdges, faces, edges, vertices) {
+  redo() {
     if (this.redoStack.length === 0) return;
     const cmd = this.redoStack.pop();
     cmd.execute();
     this.undoStack.push(cmd);
-    buildDCEL(halfEdges, faces, edges, vertices);
+    buildDCEL();
     saveEditorStateToStorage();
   }
 }
 
 export class GeometryChangeCommand {
-  /**
-   *  @param {Vertex[]} newV
-   *  @param {Edge[]} oldE
-   *  @param {Edge[]} newE
-   *  @param {Vertex[]} oldV
-   *  @param {Set<Vertex>} oldSel
-   *  @param {Set<Vertex>} newSel
-   */
   constructor(oldV, oldE, newV, newE, oldSel, newSel) {
     this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
     this.oldE = oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
@@ -76,25 +48,15 @@ export class GeometryChangeCommand {
     this.newSel = [...newSel];
   }
 
-  /**
-   * @param {Edge[]} edges
-   * @param {Vertex[]} vertices
-   * @param {Set<Vertex>} selectedVertices
-   */
-  execute(edges, vertices, selectedVertices) {
-    vertices = this.newV.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = this.newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    selectedVertices = new Set(this.newSel);
+  execute() {
+    State.vertices = this.newV.map((v) => new Vertex(v.x, v.y, v.id));
+    State.edges = this.newE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.selectedVertices = new Set(this.newSel);
   }
 
-  /**
-   * @param {Edge[]} edges
-   * @param {Vertex[]} vertices
-   * @param {Set<Vertex>} selectedVertices
-   */
-  undo(edges, vertices, selectedVertices) {
-    vertices = this.oldV.map((v) => new Vertex(v.x, v.y, v.id));
-    edges = this.oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
-    selectedVertices = new Set(this.oldSel);
+  undo() {
+    State.vertices = this.oldV.map((v) => new Vertex(v.x, v.y, v.id));
+    State.edges = this.oldE.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.selectedVertices = new Set(this.oldSel);
   }
 }

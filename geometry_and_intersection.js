@@ -1,40 +1,31 @@
 // =========================
 // GEOMETRY & INTERSECTION PIPELINE
 // =========================
+import {
+  Vertex,
+  Edge,
+  getV,
+  getOrCreateVertexInPool,
+} from "./relational_data_architecture.js";
+import { State } from "./state_persistence.js";
 
-import { Vertex, Edge } from "./relational_data_architecture.js";
-
-/**
- * @param {number} offsetY
- * @param {number} offsetX
- * @param {number} zoom
- * @param {number} x
- * @param {number} y
- */
-export function worldFromMouse(offsetX, offsetY, zoom, x, y) {
-  return [x / zoom - offsetX, y / zoom - offsetY];
+export function worldFromMouse(x, y) {
+  return [x / State.zoom - State.offsetX, y / State.zoom - State.offsetY];
 }
-/**
- * @param {number} p
- * @param {number} SNAP
- */
+
 export function snapPoint(p, SNAP) {
   return [Math.round(p[0] / SNAP) * SNAP, Math.round(p[1] / SNAP) * SNAP];
 }
 
-/**
- * @param {[number, number]} p
- */
 export function isPointInSelectionBounds(p) {
-  if (selectedVertices.size <= 1) return false;
+  if (State.selectedVertices.size <= 1) return false;
 
   let xMin = Infinity,
-    xMax = -Infinity;
-  let yMin = Infinity,
+    xMax = -Infinity,
+    yMin = Infinity,
     yMax = -Infinity;
-
-  selectedVertices.forEach((vid) => {
-    let v = getV(vertices, vid);
+  State.selectedVertices.forEach((vid) => {
+    let v = getV(State.vertices, vid);
     if (v) {
       xMin = Math.min(xMin, v.x);
       xMax = Math.max(xMax, v.x);
@@ -43,17 +34,11 @@ export function isPointInSelectionBounds(p) {
     }
   });
 
-  // Expand the interaction bounds slightly (e.g., by 6 units) to match the visual padding in render()
   return (
     p[0] >= xMin - 6 && p[0] <= xMax + 6 && p[1] >= yMin - 6 && p[1] <= yMax + 6
   );
 }
 
-/**
- * @param {Vertex[]} vPool
- * @param {Edge} edge1
- * @param {Edge} edge2
- */
 function getLineIntersection(vPool, edge1, edge2) {
   const v1 = vPool.find((v) => v.id === edge1.v1Id),
     v2 = vPool.find((v) => v.id === edge1.v2Id);
@@ -61,39 +46,25 @@ function getLineIntersection(vPool, edge1, edge2) {
     v4 = vPool.find((v) => v.id === edge2.v2Id);
   if (!v1 || !v2 || !v3 || !v4) return null;
 
-  const p0_x = v1.x,
-    p0_y = v1.y,
-    p1_x = v2.x,
-    p1_y = v2.y;
-  const p2_x = v3.x,
-    p2_y = v3.y,
-    p3_x = v4.x,
-    p3_y = v4.y;
-
-  const s1_x = p1_x - p0_x,
-    s1_y = p1_y - p0_y,
-    s2_x = p3_x - p2_x,
-    s2_y = p3_y - p2_y;
+  const s1_x = v2.x - v1.x,
+    s1_y = v2.y - v1.y,
+    s2_x = v4.x - v3.x,
+    s2_y = v4.y - v3.y;
   const denom = -s2_x * s1_y + s1_x * s2_y;
   if (Math.abs(denom) < 0.0001) return null;
 
-  const s = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / denom;
-  const t = (s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / denom;
+  const s = (-s1_y * (v1.x - v3.x) + s1_x * (v1.y - v3.y)) / denom;
+  const t = (s2_x * (v1.y - v3.y) - s2_y * (v1.x - v3.x)) / denom;
 
   if (s >= 0.001 && s <= 0.999 && t >= 0.001 && t <= 0.999) {
     return [
-      Math.round((p0_x + t * s1_x) / SNAP) * SNAP,
-      Math.round((p0_y + t * s1_y) / SNAP) * SNAP,
+      Math.round((v1.x + t * s1_x) / 10) * 10,
+      Math.round((v1.y + t * s1_y) / 10) * 10,
     ];
   }
   return null;
 }
 
-/**
- * @param {Vertex[]} vPool
- * @param {Edge[]} ePool
- * @param {Edge} newEdge
- */
 function processSplitting(vPool, ePool, newEdge) {
   const isDuplicate = ePool.some(
     (e) =>
@@ -105,14 +76,12 @@ function processSplitting(vPool, ePool, newEdge) {
   let toRemove = [],
     toAdd = [],
     split = false;
-
   for (let existing of ePool) {
     let intPt = getLineIntersection(vPool, newEdge, existing);
     if (intPt) {
       let matchId = getOrCreateVertexInPool(vPool, intPt[0], intPt[1]);
       toRemove.push(existing.id, newEdge.id);
 
-      // Generate the 4 new sliced pieces
       const subEdges = [
         new Edge(existing.v1Id, matchId),
         new Edge(matchId, existing.v2Id),
@@ -123,7 +92,6 @@ function processSplitting(vPool, ePool, newEdge) {
       subEdges.forEach((e) => {
         if (e.v1Id !== e.v2Id) toAdd.push(e);
       });
-
       split = true;
       break;
     }
@@ -138,11 +106,6 @@ function processSplitting(vPool, ePool, newEdge) {
   }
 }
 
-/**
- * @param {Vertex[]} currentVPool
- * @param {Edge[]} currentEPool
- * @param {Edge[]} newEdgesArray
- */
 export function computeStateAfterEdges(
   currentVPool,
   currentEPool,
@@ -161,50 +124,35 @@ export function computeStateAfterEdges(
   return { newV: clearV, newE: tempE };
 }
 
-/**
- * @param {Vertex[]} vertices
- * @param {[number, number]} p
- * @param {Edge} edge
- */
 function distanceToEdge(vertices, p, edge) {
   let v1 = getV(vertices, edge.v1Id),
     v2 = getV(vertices, edge.v2Id);
   if (!v1 || !v2) return Infinity;
 
-  let x = p[0],
-    y = p[1],
-    x1 = v1.x,
-    y1 = v1.y,
-    x2 = v2.x,
-    y2 = v2.y;
-  let l2 = Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2);
-  if (l2 === 0) return Math.hypot(x - x1, y - y1);
+  let l2 = Math.pow(v1.x - v2.x, 2) + Math.pow(v1.y - v2.y, 2);
+  if (l2 === 0) return Math.hypot(p[0] - v1.x, p[1] - v1.y);
   let t = Math.max(
     0,
-    Math.min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / l2),
+    Math.min(
+      1,
+      ((p[0] - v1.x) * (v2.x - v1.x) + (p[1] - v1.y) * (v2.y - v1.y)) / l2,
+    ),
   );
-  return Math.hypot(x - (x1 + t * (x2 - x1)), y - (y1 + t * (y2 - y1)));
+  return Math.hypot(
+    p[0] - (v1.x + t * (v2.x - v1.x)),
+    p[1] - (v1.y + t * (v2.y - v1.y)),
+  );
 }
 
-/**
- * @param {Vertex[]} vertices
- * @param {[number, number]} wPos
- * @param {number} zoom
- * @param {number} r
- */
-export function findVertexAt(vertices, wPos, zoom, r = 8 / zoom) {
+export function findVertexAt(wPos, r = 8 / State.zoom) {
   return (
-    vertices.find((v) => Math.hypot(v.x - wPos[0], v.y - wPos[1]) < r) || null
+    State.vertices.find((v) => Math.hypot(v.x - wPos[0], v.y - wPos[1]) < r) ||
+    null
   );
 }
 
-/**
- * @param {Vertex[]} vertices
- * @param {Edge[]} edges
- * @param {[number, number]} wPos
- * @param {number} zoom
- * @param {number} r
- */
-export function findEdgeAt(vertices, edges, wPos, zoom, r = 8 / zoom) {
-  return edges.find((e) => distanceToEdge(vertices, wPos, e) < r) || null;
+export function findEdgeAt(wPos, r = 8 / State.zoom) {
+  return (
+    State.edges.find((e) => distanceToEdge(State.vertices, wPos, e) < r) || null
+  );
 }
