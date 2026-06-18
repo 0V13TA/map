@@ -11,6 +11,9 @@ export class CommandHistory {
     this.redoStack = [];
   }
 
+  /**
+   * @param {GeometryChangeCommand} command
+   */
   execute(command) {
     command.execute();
     this.undoStack.push(command);
@@ -39,6 +42,14 @@ export class CommandHistory {
 }
 
 export class GeometryChangeCommand {
+  /**
+   * @param {Vertex[]} oldV
+   * @param {Edge[]} oldE
+   * @param {Vertex[]} newV
+   * @param {Edge[]} newE
+   * @param {Set<Vertex>} oldSel
+   * @param {Set<Vertex>} newSel
+   */
   constructor(oldV, oldE, newV, newE, oldSel, newSel) {
     this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
     this.oldE = oldE.map((e) => {
@@ -64,6 +75,7 @@ export class GeometryChangeCommand {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
+      ne.portalDirection = e.portalDirection;
       return ne;
     });
     State.selectedVertices = new Set(this.newSel);
@@ -75,6 +87,7 @@ export class GeometryChangeCommand {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
+      ne.portalDirection = e.portalDirection;
       return ne;
     });
     State.selectedVertices = new Set(this.oldSel);

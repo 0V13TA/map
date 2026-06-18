@@ -226,6 +226,13 @@ export const UI = {
           options: ["solid", "portal", "door"],
           value: "solid",
         },
+        {
+          label: "Portal Dir",
+          key: "portalDirection",
+          type: "select",
+          options: ["both", "forward", "backward"],
+          value: "both",
+        },
         { label: "Texture ID", key: "textureId", type: "number", value: 0 },
       ],
     );
@@ -368,8 +375,11 @@ export const UI = {
       if (selectedEdge) {
         this.propertiesPanel.classList.remove("hidden");
 
-        this.wallInspector.setValue("type", selectedEdge.type);
-        this.wallInspector.setValue("textureId", selectedEdge.textureId);
+        this.wallInspector.setValues({
+          type: selectedEdge.type,
+          portalDirection: selectedEdge.portalDirection || "both",
+          textureId: selectedEdge.textureId,
+        });
 
         this.wallInspector.show();
       }

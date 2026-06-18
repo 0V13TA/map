@@ -1,29 +1,43 @@
 import { TOOLS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
 import { Vertex, Edge } from "./relational_data_architecture.js";
-import { buildDCEL } from "./DCEL.js";
-import { GeometryChangeCommand } from "./command_pattern.js";
+import { buildDCEL, Face, HalfEdge } from "./DCEL.js";
+import { CommandHistory, GeometryChangeCommand } from "./command_pattern.js";
 
 // ==========================================
 // CENTRAL STATE MANAGER
 // ==========================================
 export const State = {
+  /** @type {Vertex[]} */
   vertices: [],
+  /** @type {Edge[]} */
   edges: [],
+  /** @type {Face[]} */
   faces: [],
+  /** @type {HalfEdge[]} */
   halfEdges: [],
 
+  /** @type {Set<Vertex>} */
   selectedVertices: new Set(),
+  /** @type {import("./relational_data_architecture.js").UUID} */
   selectedFaceId: null,
+  /** @type {import("./relational_data_architecture.js").UUID} */
   selectedEdgeId: null,
 
+  /** @type {TOOLS} */
   currentTool: TOOLS.LINE,
+  /** @type {DEFAULT_KEY_BINDINGS} */
   keyBindings: { ...DEFAULT_KEY_BINDINGS },
 
+  /** @type {number} */
   zoom: 1.0,
+  /** @type {number} */
   offsetX: 0,
+  /** @type {number} */
   offsetY: 0,
+  /** @type {boolean} */
   showTriangulationWireframes: false,
 
+  /** @type {CommandHistory} */
   History: null, // Injected at boot by index.js
 };
 
@@ -41,6 +55,7 @@ export function saveEditorStateToStorage() {
         v2Id: e.v2Id,
         type: e.type,
         textureId: e.textureId,
+        portalDirection: e.portalDirection,
       })),
     },
     sectors: State.faces.map((f) => ({
@@ -93,6 +108,7 @@ export function loadEditorStateFromStorage() {
         let edge = new Edge(e.v1Id, e.v2Id, e.id);
         if (e.type) edge.type = e.type;
         if (e.textureId !== undefined) edge.textureId = e.textureId;
+        if (e.portalDirection) edge.portalDirection = e.portalDirection;
         return edge;
       });
     }

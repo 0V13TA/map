@@ -48,7 +48,8 @@ export function isPointInFace(p, face) {
 }
 
 export function buildDCEL() {
-  const oldFaces = [...State.faces]; // Cache old faces before destroying them
+  // 1. Create the consumable pool FIRST
+  const oldFaces = [...State.faces];
 
   State.halfEdges.length = 0;
   State.faces.length = 0;
@@ -119,18 +120,23 @@ export function buildDCEL() {
       newFace.outerComponent = startEdge;
       loopEdges.forEach((edge) => (edge.face = newFace));
 
-      // PRESERVE PROPERTIES: If this loop shares any edge with a previous face, inherit its colors/heights!
-      const match = oldFaces.find(
+      // 2. PRESERVE PROPERTIES: Apply the consumable pool logic here, before pushing!
+      const matchIndex = oldFaces.findIndex(
         (oldF) =>
           oldF.outerComponent &&
           loopEdges.some((e) => e.edge.id === oldF.outerComponent.edge.id),
       );
-      if (match) {
+
+      if (matchIndex !== -1) {
+        const match = oldFaces[matchIndex];
         newFace.id = match.id; // Keep the same identity
         newFace.floorHeight = match.floorHeight;
         newFace.ceilHeight = match.ceilHeight;
         newFace.floorColor = match.floorColor;
         newFace.ceilColor = match.ceilColor;
+
+        // Remove it so adjacent rooms don't steal the exact same identity!
+        oldFaces.splice(matchIndex, 1);
       }
 
       State.faces.push(newFace);

@@ -86,7 +86,13 @@ export function exportMapData() {
   const mapData = {
     version: "1.0",
     vertices: State.vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
-    edges: State.edges.map((e) => ({ id: e.id, v1Id: e.v1Id, v2Id: e.v2Id })),
+    edges: State.edges.map((e) => ({
+      id: e.id,
+      v1Id: e.v1Id,
+      v2Id: e.v2Id,
+      type: e.type,
+      portalDirection: e.portalDirection,
+    })),
     sectors: exportSectors,
   };
 

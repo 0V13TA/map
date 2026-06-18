@@ -1,9 +1,15 @@
+// ts-check
+"use strict";
 import { TOOLS, ACTIONS } from "./enums_actions.js";
 import { buildDCEL, isPointInFace } from "./DCEL.js";
 import { CommandHistory, GeometryChangeCommand } from "./command_pattern.js";
 import { UI } from "./ui.js";
 import { triangulatePolygonPerimeter } from "./triangulation.js";
-import { State, loadEditorStateFromStorage } from "./state_persistence.js";
+import {
+  State,
+  loadEditorStateFromStorage,
+  saveEditorStateToStorage,
+} from "./state_persistence.js";
 import {
   snapPoint,
   findEdgeAt,
@@ -107,27 +113,84 @@ canvas.addEventListener("keydown", (e) => {
       State.offsetX -= 40 / State.zoom;
       break;
     case ACTIONS.DELETE_SELECTION:
-      if (State.selectedVertices.size > 0) {
-        let nextE = State.edges.filter(
+      // 1. Precise Face Deletion
+      if (State.selectedFaceId) {
+        let edgesToRemove = new Set();
+        let faceHalfEdges = State.halfEdges.filter(
+          (he) => he.face && he.face.id === State.selectedFaceId,
+        );
+
+        faceHalfEdges.forEach((he) => {
+          // If the twin doesn't belong to a face, it's an outer boundary exclusive to this room
+          if (!he.twin.face) {
+            edgesToRemove.add(he.edge.id);
+          }
+        });
+
+        const newE = State.edges.filter((e) => !edgesToRemove.has(e.id));
+        // Clean up orphan vertices safely
+        const newV = State.vertices.filter((v) =>
+          newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
+        );
+
+        State.History.execute(
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            newV,
+            newE,
+            State.selectedVertices,
+            [],
+          ),
+        );
+        State.selectedFaceId = null;
+        State.selectedVertices.clear();
+        UI.updatePropertiesPanel();
+      }
+      // 2. Precise Edge Deletion
+      else if (State.selectedEdgeId && State.selectedVertices.size <= 2) {
+        const newE = State.edges.filter((e) => e.id !== State.selectedEdgeId);
+        // Clean up orphan vertices safely
+        const newV = State.vertices.filter((v) =>
+          newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
+        );
+
+        State.History.execute(
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            newV,
+            newE,
+            State.selectedVertices,
+            [],
+          ),
+        );
+        State.selectedEdgeId = null;
+        State.selectedVertices.clear();
+        UI.updatePropertiesPanel();
+      }
+      // 3. Fallback to standard mass-vertex deletion
+      else if (State.selectedVertices.size > 0) {
+        const newE = State.edges.filter(
           (e) =>
             !State.selectedVertices.has(e.v1Id) &&
             !State.selectedVertices.has(e.v2Id),
         );
-        let nextV = State.vertices.filter(
-          (v) =>
-            !State.selectedVertices.has(v.id) &&
-            nextE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
+        const newV = State.vertices.filter(
+          (v) => !State.selectedVertices.has(v.id),
         );
         State.History.execute(
           new GeometryChangeCommand(
             State.vertices,
             State.edges,
-            nextV,
-            nextE,
+            newV,
+            newE,
             State.selectedVertices,
             [],
           ),
         );
+        State.selectedEdgeId = null;
+        State.selectedFaceId = null;
       }
       break;
     case ACTIONS.ROTATE_SELECTION:
@@ -209,6 +272,7 @@ canvas.addEventListener("mousedown", (e) => {
     e: State.edges.map((e) => {
       let edge = new Edge(e.v1Id, e.v2Id, e.id);
       edge.type = e.type;
+      edge.portalDirection = e.portalDirection;
       edge.textureId = e.textureId;
       return edge;
     }),
@@ -255,11 +319,18 @@ canvas.addEventListener("mousedown", (e) => {
           snapW[0],
           snapW[1],
         );
+        let e1 = new Edge(hitEdge.v1Id, newVId);
+        e1.type = hitEdge.type;
+        e1.portalDirection = hitEdge.portalDirection;
+        e1.textureId = hitEdge.textureId;
+
+        let e2 = new Edge(newVId, hitEdge.v2Id);
+        e2.type = hitEdge.type;
+        e2.portalDirection = hitEdge.portalDirection;
+        e2.textureId = hitEdge.textureId;
+
         let nextE = State.edges.filter((e) => e.id !== hitEdge.id);
-        nextE.push(
-          new Edge(hitEdge.v1Id, newVId),
-          new Edge(newVId, hitEdge.v2Id),
-        );
+        nextE.push(e1, e2);
         let state = computeStateAfterEdges(State.vertices, nextE, []);
 
         State.History.execute(
@@ -295,6 +366,8 @@ canvas.addEventListener("mousedown", (e) => {
       };
 
       if (grabV) {
+        State.selectedEdgeId = null;
+        State.selectedFaceId = null; // Clear stale face selection
         if (e.shiftKey) {
           if (State.selectedVertices.has(grabV.id))
             State.selectedVertices.delete(grabV.id);
@@ -306,10 +379,15 @@ canvas.addEventListener("mousedown", (e) => {
       } else if (isPointInSelectionBounds(world)) {
         // Do nothing, let mousemove handle grouping drag for existing selections
       } else if (grabE) {
+        State.selectedEdgeId = grabE.id;
+        State.selectedFaceId = null; // Clear stale face selection
         if (!e.shiftKey) State.selectedVertices.clear();
         State.selectedVertices.add(grabE.v1Id);
         State.selectedVertices.add(grabE.v2Id);
       } else if (grabF) {
+        State.selectedEdgeId = null;
+        State.selectedFaceId = grabF.id; // Track the explicitly clicked face!
+
         // 2. Select all vertices tracing the perimeter of the clicked room!
         if (!e.shiftKey) State.selectedVertices.clear();
         let loopEdge = grabF.outerComponent;
@@ -320,6 +398,8 @@ canvas.addEventListener("mousedown", (e) => {
           } while (loopEdge && loopEdge !== grabF.outerComponent);
         }
       } else {
+        State.selectedEdgeId = null;
+        State.selectedFaceId = null; // Clear stale face selection
         if (!e.shiftKey) State.selectedVertices.clear();
         isBoxSelecting = true;
         boxStartWorld = [...world];
@@ -551,7 +631,7 @@ canvas.addEventListener("wheel", (e) => {
 window.addEventListener("orc_inspector_change", (e) => {
   const { id, values } = e.detail;
 
-  if (id === "room_properties" && State.selectedFaceId) {
+  if (id === "room_inspector" && State.selectedFaceId) {
     const face = State.faces.find((f) => f.id === State.selectedFaceId);
     if (face) {
       face.floorHeight = values.floorHeight;
@@ -560,10 +640,11 @@ window.addEventListener("orc_inspector_change", (e) => {
       face.ceilColor = values.ceilColor;
       saveEditorStateToStorage();
     }
-  } else if (id === "wall_properties" && State.selectedEdgeId) {
+  } else if (id === "wall_inspector" && State.selectedEdgeId) {
     const edge = State.edges.find((e) => e.id === State.selectedEdgeId);
     if (edge) {
       edge.type = values.type;
+      edge.portalDirection = values.portalDirection;
       edge.textureId = values.textureId;
       saveEditorStateToStorage();
     }
@@ -708,6 +789,48 @@ function render() {
 
     ctx.stroke();
     ctx.setLineDash([]); // Reset dash for subsequent drawing operations
+
+    // NEW: Portal Direction Indicator (Normal Vector Arrow)
+    // NEW: Portal Direction Indicator (Normal Vector Arrow)
+    if (edge.type === "portal" && !isLoose) {
+      let midX = (v1.x + v2.x) / 2;
+      let midY = (v1.y + v2.y) / 2;
+      let dx = v2.x - v1.x;
+      let dy = v2.y - v1.y;
+      let len = Math.hypot(dx, dy);
+
+      if (len > 0) {
+        let nx = -dy / len;
+        let ny = dx / len;
+        let arrowLen = 12 / State.zoom;
+        let headLen = 6 / State.zoom;
+
+        const drawArrow = (dirX, dirY) => {
+          let angle = Math.atan2(dirY, dirX);
+          ctx.beginPath();
+          ctx.strokeStyle = standsSelected ? "#ff4444" : "#44ffff";
+          ctx.lineWidth = 2 / State.zoom;
+          ctx.moveTo(midX, midY);
+          ctx.lineTo(midX + dirX * arrowLen, midY + dirY * arrowLen);
+          ctx.lineTo(
+            midX + dirX * arrowLen - headLen * Math.cos(angle - Math.PI / 6),
+            midY + dirY * arrowLen - headLen * Math.sin(angle - Math.PI / 6),
+          );
+          ctx.moveTo(midX + dirX * arrowLen, midY + dirY * arrowLen);
+          ctx.lineTo(
+            midX + dirX * arrowLen - headLen * Math.cos(angle + Math.PI / 6),
+            midY + dirY * arrowLen - headLen * Math.sin(angle + Math.PI / 6),
+          );
+          ctx.stroke();
+        };
+
+        let pDir = edge.portalDirection || "both";
+        // Draw normal (forward)
+        if (pDir === "both" || pDir === "forward") drawArrow(nx, ny);
+        // Draw inverse normal (backward)
+        if (pDir === "both" || pDir === "backward") drawArrow(-nx, -ny);
+      }
+    }
   });
   // Selection Bounds
   if (State.selectedVertices.size > 1) {

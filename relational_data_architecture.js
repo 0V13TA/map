@@ -36,6 +36,8 @@ export class Edge {
 
     /** @type {"solid" | "portal" | "door"} */
     this.type = "solid";
+    /*** @type {"forward" | "backward" | "both"} */
+    this.portalDirection = "foward";
     /** @type {number} */
     this.textureId = 0;
   }
