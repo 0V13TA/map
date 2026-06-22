@@ -25,6 +25,7 @@ import {
   Edge,
   Vertex,
   getOrCreateVertexInPool,
+  Entity,
 } from "./relational_data_architecture.js";
 
 // Initialize Central Logic
@@ -195,6 +196,10 @@ canvas.addEventListener("keydown", (e) => {
         );
         State.selectedEdgeId.clear();
         State.selectedFaceId.clear();
+      } else if (State.selectedEntityIds.size > 0) {
+        State.entities = State.entities.filter(
+          (e) => !State.selectedEntityIds.has(e.id),
+        );
       }
       break;
     case ACTIONS.ROTATE_SELECTION:
@@ -342,6 +347,26 @@ canvas.addEventListener("mousedown", (e) => {
         return;
       }
 
+      let hitEnt = State.entities.find(
+        (ent) =>
+          Math.hypot(ent.x - world[0], ent.y - world[1]) < 12 / State.zoom,
+      );
+      if (hitEnt) {
+        State.selectedFaceId.clear();
+        State.selectedEdgeId.clear();
+        State.selectedVertices.clear();
+        if (e.shiftKey) {
+          if (State.selectedEntityIds.has(hitEnt.id))
+            State.selectedEntityIds.delete(hitEnt.id);
+          else State.selectedEntityIds.add(hitEnt.id);
+        } else if (!State.selectedEntityIds.has(hitEnt.id)) {
+          State.selectedEntityIds.clear();
+          State.selectedEntityIds.add(hitEnt.id);
+        }
+        UI.updatePropertiesPanel();
+        return; // Break early so we don't grab geometry underneath!
+      }
+
       let grabV = findVertexAt(world);
       let grabE = findEdgeAt(world);
 
@@ -380,6 +405,88 @@ canvas.addEventListener("mousedown", (e) => {
         } else if (!State.selectedVertices.has(grabV.id)) {
           State.selectedVertices.clear();
           State.selectedVertices.add(grabV.id);
+        }
+        UI.updatePropertiesPanel();
+      } else if (
+        grabE &&
+        (e.shiftKey ||
+          e.ctrlKey ||
+          e.metaKey ||
+          !State.selectedEdgeId.has(grabE.id))
+      ) {
+        State.selectedFaceId.clear();
+
+        // ==============================
+        // TIER 2: SECTOR EXTRUSION
+        // ==============================
+        if (e.ctrlKey || e.metaKey) {
+          let v1 = getV(State.vertices, grabE.v1Id);
+          let v2 = getV(State.vertices, grabE.v2Id);
+
+          // Tiny initial offset to separate the new wall before the mouse physically moves it
+          let dx = v2.x - v1.x,
+            dy = v2.y - v1.y;
+          let len = Math.hypot(dx, dy);
+          let nx = -(dy / len) * 0.5,
+            ny = (dx / len) * 0.5;
+
+          let nv1 = new Vertex(v1.x + nx, v1.y + ny);
+          let nv2 = new Vertex(v2.x + nx, v2.y + ny);
+          State.vertices.push(nv1, nv2);
+
+          let eNew = new Edge(nv1.id, nv2.id);
+          eNew.type = grabE.type;
+          eNew.textureId = grabE.textureId;
+
+          let eSide1 = new Edge(grabE.v1Id, nv1.id);
+          let eSide2 = new Edge(grabE.v2Id, nv2.id);
+
+          State.edges.push(eNew, eSide1, eSide2);
+
+          State.selectedEdgeId.clear();
+          State.selectedEdgeId.add(eNew.id);
+          State.selectedVertices.clear();
+          State.selectedVertices.add(nv1.id);
+          State.selectedVertices.add(nv2.id);
+
+          initialDragStateSnapshot = {
+            v: State.vertices.map((v) => {
+              let nv = new Vertex(v.x, v.y, v.id);
+              nv.zFloorOffset = v.zFloorOffset || 0;
+              nv.zCeilOffset = v.zCeilOffset || 0;
+              return nv;
+            }),
+            e: State.edges.map((edge) => {
+              let ne = new Edge(edge.v1Id, edge.v2Id, edge.id);
+              ne.type = edge.type;
+              ne.portalDirection = edge.portalDirection;
+              ne.textureId = edge.textureId;
+              ne.targetEdgeId = edge.targetEdgeId;
+              return ne;
+            }),
+          };
+          UI.updatePropertiesPanel();
+        } else if (e.shiftKey) {
+          if (State.selectedEdgeId.has(grabE.id)) {
+            State.selectedEdgeId.delete(grabE.id);
+            State.selectedVertices.clear();
+            State.edges.forEach((edge) => {
+              if (State.selectedEdgeId.has(edge.id)) {
+                State.selectedVertices.add(edge.v1Id);
+                State.selectedVertices.add(edge.v2Id);
+              }
+            });
+          } else {
+            State.selectedEdgeId.add(grabE.id);
+            State.selectedVertices.add(grabE.v1Id);
+            State.selectedVertices.add(grabE.v2Id);
+          }
+        } else {
+          State.selectedEdgeId.clear();
+          State.selectedVertices.clear();
+          State.selectedEdgeId.add(grabE.id);
+          State.selectedVertices.add(grabE.v1Id);
+          State.selectedVertices.add(grabE.v2Id);
         }
         UI.updatePropertiesPanel();
       } else if (isPointInSelectionBounds(world)) {
@@ -455,6 +562,14 @@ canvas.addEventListener("mousedown", (e) => {
         UI.updatePropertiesPanel();
       }
       break;
+    case TOOLS.ENTITY:
+      if (e.altKey) return;
+      let snappedEnt = getMagneticSnapPosition(world, new Set(), SNAP);
+      State.entities.push(
+        new Entity(snappedEnt[0], snappedEnt[1], "PlayerSpawn"),
+      );
+      saveEditorStateToStorage();
+      break;
   }
 });
 
@@ -486,11 +601,22 @@ canvas.addEventListener("mousemove", (e) => {
       if (isBoxSelecting) return;
       let dx = world[0] - dragLastWorld[0],
         dy = world[1] - dragLastWorld[1];
-      State.selectedVertices.forEach((vid) => {
-        let v = getV(State.vertices, vid);
-        v.x += dx;
-        v.y += dy;
-      });
+
+      if (State.selectedEntityIds.size > 0) {
+        State.selectedEntityIds.forEach((eid) => {
+          let ent = State.entities.find((e) => e.id === eid);
+          if (ent) {
+            ent.x += dx;
+            ent.y += dy;
+          }
+        });
+      } else {
+        State.selectedVertices.forEach((vid) => {
+          let v = getV(State.vertices, vid);
+          v.x += dx;
+          v.y += dy;
+        });
+      }
       break;
     case TOOLS.ZOOM:
       let zoomCenter = worldFromMouse(canvas.width / 2, canvas.height / 2);
@@ -661,6 +787,7 @@ window.addEventListener("mouseup", (e) => {
         isBoxSelecting = false;
         boxStartWorld = null;
       } else if (initialDragStateSnapshot) {
+        // 1. Move and Snap
         State.selectedVertices.forEach((vid) => {
           let v = getV(State.vertices, vid);
           if (State.selectedVertices.size === 1) {
@@ -677,24 +804,57 @@ window.addEventListener("mouseup", (e) => {
           }
         });
 
+        // 2. TIER 2: VERTEX WELDING (Auto-merge overlapping points to heal topology)
+        let vertexMap = new Map();
+        let weldedV = [];
+        State.vertices.forEach((v) => {
+          let existing = weldedV.find(
+            (ev) => Math.hypot(ev.x - v.x, ev.y - v.y) < 0.1,
+          );
+          if (existing) {
+            vertexMap.set(v.id, existing.id);
+          } else {
+            let safeV = new Vertex(v.x, v.y, v.id);
+            safeV.zFloorOffset = v.zFloorOffset || 0;
+            safeV.zCeilOffset = v.zCeilOffset || 0;
+            weldedV.push(safeV);
+            vertexMap.set(v.id, v.id);
+          }
+        });
+
+        // 3. Remap edges and discard zero-length collapsed edges
         let staticEdges = [],
           movedEdges = [];
         State.edges.forEach((e) => {
+          let v1Mapped = vertexMap.get(e.v1Id);
+          let v2Mapped = vertexMap.get(e.v2Id);
+
+          if (v1Mapped === v2Mapped) return; // Edge collapsed into a single point! Destroy it.
+
+          let ne = new Edge(v1Mapped, v2Mapped, e.id);
+          ne.type = e.type;
+          ne.portalDirection = e.portalDirection;
+          ne.textureId = e.textureId;
+          ne.targetEdgeId = e.targetEdgeId;
+
           if (
             State.selectedVertices.has(e.v1Id) ||
             State.selectedVertices.has(e.v2Id)
           ) {
-            let ne = new Edge(e.v1Id, e.v2Id, e.id);
-            ne.type = e.type;
-            ne.portalDirection = e.portalDirection;
-            ne.textureId = e.textureId;
-            ne.targetEdgeId = e.targetEdgeId;
             movedEdges.push(ne);
-          } else staticEdges.push(e);
+          } else {
+            staticEdges.push(ne);
+          }
+        });
+
+        // Update selected tracking to use the new fused IDs
+        let newSelection = new Set();
+        State.selectedVertices.forEach((vid) => {
+          newSelection.add(vertexMap.get(vid));
         });
 
         let nextState = computeStateAfterEdges(
-          State.vertices,
+          weldedV,
           staticEdges,
           movedEdges,
         );
@@ -705,7 +865,7 @@ window.addEventListener("mouseup", (e) => {
             nextState.newV,
             nextState.newE,
             State.selectedVertices,
-            State.selectedVertices,
+            newSelection,
           ),
         );
         initialDragStateSnapshot = null;
@@ -822,6 +982,14 @@ window.addEventListener("orc_inspector_change", (e) => {
       if (State.selectedVertices.has(v.id)) {
         v.zFloorOffset = values.zFloorOffset;
         v.zCeilOffset = values.zCeilOffset;
+      }
+    });
+    saveEditorStateToStorage();
+  } else if (id === "entity_inspector" && State.selectedEntityIds.size > 0) {
+    State.entities.forEach((ent) => {
+      if (State.selectedEntityIds.has(ent.id)) {
+        ent.type = values.type;
+        ent.angle = values.angle;
       }
     });
     saveEditorStateToStorage();
@@ -1143,6 +1311,38 @@ function render() {
   }
   ctx.setLineDash([]);
 
+  // --- DRAW ENTITIES ---
+  State.entities.forEach((ent) => {
+    ctx.beginPath();
+    ctx.arc(ent.x, ent.y, 8 / State.zoom, 0, 2 * Math.PI);
+
+    // Color code by type
+    if (ent.type === "PlayerSpawn") ctx.fillStyle = "#00ff00";
+    else if (ent.type === "Enemy") ctx.fillStyle = "#ff0000";
+    else if (ent.type === "Light") ctx.fillStyle = "#ffff00";
+    else ctx.fillStyle = "#aa00aa"; // Prop
+
+    // Highlight if selected
+    if (State.selectedEntityIds.has(ent.id)) {
+      ctx.lineWidth = 3 / State.zoom;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+    }
+    ctx.fill();
+
+    // Draw direction indicator (Angle)
+    ctx.beginPath();
+    ctx.moveTo(ent.x, ent.y);
+    let aRad = ent.angle * (Math.PI / 180);
+    ctx.lineTo(
+      ent.x + (Math.cos(aRad) * 16) / State.zoom,
+      ent.y + (Math.sin(aRad) * 16) / State.zoom,
+    );
+    ctx.lineWidth = 2 / State.zoom;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+  });
+
   // Draw Edges
   State.edges.forEach((edge) => {
     let v1 = getV(State.vertices, edge.v1Id),
@@ -1265,7 +1465,6 @@ function render() {
     );
   }
 
-  // Draw Vertices
   // Draw Vertices
   State.vertices.forEach((v) => {
     ctx.beginPath();

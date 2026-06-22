@@ -78,16 +78,33 @@ export class ORC_Inspector {
 
       // Generic Validation Attributes
       if (field.min !== undefined) input.min = field.min;
-      if (field.max !== undefined) input.max = field.max;
+      // NEW: Do NOT enforce a hard HTML max if we want it to infinitely wrap around!
+      if (field.max !== undefined && !field.wrap) input.max = field.max;
       if (field.step !== undefined) input.step = field.step;
 
+      // Handle the value as it changes (typing or clicking arrows)
       input.addEventListener("input", (e) => {
-        let val = parseFloat(e.target.value) || 0;
-        // Enforce limits agnostically
-        if (field.min !== undefined) val = Math.max(field.min, val);
-        if (field.max !== undefined) val = Math.min(field.max, val);
+        let val = parseFloat(e.target.value);
+        // Allow the user to temporarily clear the box or type a minus sign without it resetting to 0
+        if (isNaN(val)) return;
+
+        if (field.wrap && field.max !== undefined) {
+          let min = field.min || 0;
+          let range = field.max - min;
+          // Mathematical modulo wrapper that safely handles negative numbers
+          val = ((((val - min) % range) + range) % range) + min;
+        } else {
+          // Standard clamping
+          if (field.min !== undefined) val = Math.max(field.min, val);
+          if (field.max !== undefined) val = Math.min(field.max, val);
+        }
+
         this.state[field.key] = val;
         this.emitChangeEvent();
+      });
+
+      input.addEventListener("change", (e) => {
+        e.target.value = this.state[field.key];
       });
     } else if (field.type === "color") {
       input = document.createElement("input");
@@ -224,6 +241,7 @@ export const UI = {
   roomInspector: ORC_Inspector,
   wallInspector: ORC_Inspector,
   vertexInspector: ORC_Inspector,
+  entityInspector: ORC_Inspector,
 
   init() {
     // 1. Bootstrap the Retained-Mode Inspectors
@@ -294,6 +312,30 @@ export const UI = {
       ],
     );
 
+    this.entityInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "entity_inspector", title: "Entity Properties" },
+      [
+        {
+          label: "Type",
+          key: "type",
+          type: "select",
+          options: ["PlayerSpawn", "Enemy", "Light", "Prop"],
+          value: "PlayerSpawn",
+        },
+        {
+          label: "Spawn Angle",
+          key: "angle",
+          type: "number",
+          value: 0,
+          step: 15,
+          wrap: true,
+          min: 0,
+          max: 360,
+        },
+      ],
+    );
+
     // 2. Wire up the rest of the UI interactions
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -303,9 +345,10 @@ export const UI = {
 
           // NEW: Only clear selection if we are actually changing to a different tool
           if (State.currentTool !== newTool) {
-            State.selectedVertices.clear();
             State.selectedFaceId.clear();
             State.selectedEdgeId.clear();
+            State.selectedVertices.clear();
+            State.selectedEntityIds.clear();
 
             State.currentTool = newTool;
             this.updateToolUI();
@@ -414,6 +457,7 @@ export const UI = {
     this.propertiesPanel.classList.add("hidden");
     this.roomInspector.hide();
     this.wallInspector.hide();
+    this.entityInspector.hide();
     this.vertexInspector.hide();
 
     // 1. Rooms Selected
@@ -480,6 +524,26 @@ export const UI = {
           zCeilOffset: selectedV.zCeilOffset || 0,
         });
         this.vertexInspector.show();
+      }
+    }
+    // 4. Entities Selected
+    else if (State.selectedEntityIds.size > 0) {
+      const firstId = Array.from(State.selectedEntityIds)[0];
+      const selectedEnt = State.entities.find((e) => e.id === firstId);
+      if (selectedEnt) {
+        this.propertiesPanel.classList.remove("hidden");
+        this.entityInspector.container.querySelector(
+          ".panel-title",
+        ).textContent =
+          State.selectedEntityIds.size > 1
+            ? `Entities (${State.selectedEntityIds.size})`
+            : "Entity Properties";
+
+        this.entityInspector.setValues({
+          type: selectedEnt.type,
+          angle: selectedEnt.angle || 0,
+        });
+        this.entityInspector.show();
       }
     }
   },

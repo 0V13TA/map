@@ -144,6 +144,13 @@ export function exportMapData() {
       targetEdgeId: e.targetEdgeId,
       portalDirection: e.portalDirection,
     })),
+    entities: State.entities.map((ent) => ({
+      id: ent.id,
+      x: ent.x,
+      y: ent.y,
+      type: ent.type,
+      angle: ent.angle,
+    })),
     sectors: exportSectors,
   };
 

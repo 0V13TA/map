@@ -61,6 +61,22 @@ export class Edge {
   }
 }
 
+export class Entity {
+  /**
+   * @param {number} y
+   * @param {number} x
+   * @param {"PlayerSpawn" | "Enemy" | "Light" | "Prop"} [type = "PlayerSpawn"] - The type of entity (e.g., "PlayerSpawn", "Enemy", "Light", "Prop")
+   * @param {UUID | null} [id = null] - Optional unique identifier for the entity. If not provided, a new UUID will be generated.
+   */
+  constructor(x, y, type = "PlayerSpawn", id = null) {
+    this.id = id || generateUUID();
+    this.x = x;
+    this.y = y;
+    this.type = type; // e.g., "PlayerSpawn", "Enemy", "Light", "Prop"
+    this.angle = 0; // The direction the entity is facing (degrees)
+  }
+}
+
 /**
  * @param {UUID} id
  * @param {Vertex[]} vertices

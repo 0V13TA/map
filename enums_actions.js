@@ -6,6 +6,7 @@ export const TOOLS = {
   NGON: "ngon",
   ZOOM: "zoom",
   DRAG: "drag",
+  ENTITY: "entity",
 };
 
 export const ACTIONS = {

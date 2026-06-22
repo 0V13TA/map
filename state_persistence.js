@@ -23,6 +23,11 @@ export const State = {
   /** @type {Set<import("./relational_data_architecture.js").UUID>} */
   selectedEdgeId: new Set(),
 
+  /** @type {import("./relational_data_architecture.js").Entity[]} */
+  entities: [],
+  /** @type {Set<import("./relational_data_architecture.js").UUID>} */
+  selectedEntityIds: new Set(),
+
   /** @type {TOOLS} */
   currentTool: TOOLS.LINE,
   /** @type {DEFAULT_KEY_BINDINGS} */
@@ -67,6 +72,13 @@ export function saveEditorStateToStorage() {
       ceilColor: f.ceilColor,
       anchorEdgeId: f.outerComponent?.edge?.id,
       anchorOriginId: f.outerComponent?.originId,
+    })),
+    entities: State.entities.map((ent) => ({
+      id: ent.id,
+      x: ent.x,
+      y: ent.y,
+      type: ent.type,
+      angle: ent.angle,
     })),
     history: {
       undo: State.History.undoStack.map((cmd) => ({
@@ -161,6 +173,14 @@ export function loadEditorStateFromStorage() {
             h.newSel,
           ),
       );
+    }
+
+    if (data.entities) {
+      State.entities = data.entities.map((ent) => {
+        let e = new Entity(ent.x, ent.y, ent.type, ent.id);
+        e.angle = ent.angle || 0;
+        return e;
+      });
     }
     return true;
   } catch (err) {
