@@ -1,6 +1,5 @@
-// ts-check
 "use strict";
-import { TOOLS, ACTIONS } from "./enums_actions.js";
+import { TOOLS, ACTIONS, type Action, type Tool } from "./enums_actions.js";
 import { buildDCEL, isPointInFace } from "./DCEL.js";
 import { CommandHistory, GeometryChangeCommand } from "./command_pattern.js";
 import { UI } from "./ui.js";
@@ -19,6 +18,7 @@ import {
   computeStateAfterEdges,
   isPointInSelectionBounds,
   getMagneticSnapPosition,
+  type Point2D,
 } from "./geometry_and_intersection.js";
 import {
   getV,
@@ -26,6 +26,7 @@ import {
   Vertex,
   getOrCreateVertexInPool,
   Entity,
+  type UUID,
 } from "./relational_data_architecture.js";
 
 // Initialize Central Logic
@@ -49,18 +50,22 @@ const SNAP = 10;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20.0;
 
-/** @type {import("./relational_data_architecture.js").UUID} */
-let draggingPortalId = null;
+function getNgonSides() {
+  const input = document.getElementById("ngon-sides") as HTMLInputElement | null;
+  return Math.max(3, Math.min(12, parseInt(input?.value || "", 10) || 8));
+}
+
+let draggingPortalId: UUID | null = null;
 
 let isMouseDown = false;
 let currentAnchorId = null;
-let currentRawMouse = [0, 0];
-let boxStartWorld = null;
+let currentRawMouse: Point2D = [0, 0];
+let boxStartWorld: Point2D | null = null;
 let isBoxSelecting = false;
-let dragLastWorld = [0, 0];
+let dragLastWorld: Point2D = [0, 0];
 let initialDragStateSnapshot = null;
 let isPanning = false;
-let panLastScreen = [0, 0];
+let panLastScreen: Point2D = [0, 0];
 let hoveredVertexId = null;
 let hoveredEdgeId = null;
 let actionStartSnapshot = null;
@@ -95,7 +100,7 @@ canvas.addEventListener("keydown", (e) => {
     case ACTIONS.SET_TOOL_NGON:
     case ACTIONS.SET_TOOL_ZOOM:
     case ACTIONS.SET_TOOL_DRAG: {
-      const toolMap = {
+      const toolMap: Partial<Record<Action, Tool>> = {
         [ACTIONS.SET_TOOL_LINE]: TOOLS.LINE,
         [ACTIONS.SET_TOOL_NGON]: TOOLS.NGON,
         [ACTIONS.SET_TOOL_ZOOM]: TOOLS.ZOOM,
@@ -103,6 +108,7 @@ canvas.addEventListener("keydown", (e) => {
       };
 
       const newTool = toolMap[action];
+      if (!newTool) break;
       if (State.currentTool !== newTool) {
         State.selectedVertices.clear();
         State.selectedFaceId.clear();
@@ -126,7 +132,7 @@ canvas.addEventListener("keydown", (e) => {
       break;
     case ACTIONS.DELETE_SELECTION:
       if (State.selectedFaceId.size > 0) {
-        let edgesToRemove = new Set();
+        let edgesToRemove = new Set<UUID>();
         let faceHalfEdges = State.halfEdges.filter(
           (he) => he.face && State.selectedFaceId.has(he.face.id),
         );
@@ -303,8 +309,8 @@ canvas.addEventListener("mousedown", (e) => {
     }),
     sel: new Set(State.selectedVertices),
   };
-  currentRawMouse = [...world];
-  dragLastWorld = [...world];
+  currentRawMouse = [world[0], world[1]];
+  dragLastWorld = [world[0], world[1]];
   isBoxSelecting = false;
   boxStartWorld = null;
 
@@ -313,7 +319,7 @@ canvas.addEventListener("mousedown", (e) => {
       if (e.altKey) return;
       let hitV = findVertexAt(world);
       if (!hitV) {
-        let snapped = getMagneticSnapPosition(world, new Set(), SNAP);
+        let snapped = getMagneticSnapPosition(world, new Set<UUID>(), SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           State.vertices,
           snapped[0],
@@ -325,7 +331,7 @@ canvas.addEventListener("mousedown", (e) => {
     case TOOLS.NGON:
       if (e.altKey) return;
       if (!currentAnchorId) {
-        let snapped = getMagneticSnapPosition(world, new Set(), SNAP);
+        let snapped = getMagneticSnapPosition(world, new Set<UUID>(), SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           State.vertices,
           snapped[0],
@@ -558,13 +564,13 @@ canvas.addEventListener("mousedown", (e) => {
         State.selectedFaceId.clear();
         if (!e.shiftKey) State.selectedVertices.clear();
         isBoxSelecting = true;
-        boxStartWorld = [...world];
+        boxStartWorld = [world[0], world[1]];
         UI.updatePropertiesPanel();
       }
       break;
     case TOOLS.ENTITY:
       if (e.altKey) return;
-      let snappedEnt = getMagneticSnapPosition(world, new Set(), SNAP);
+      let snappedEnt = getMagneticSnapPosition(world, new Set<UUID>(), SNAP);
       State.entities.push(
         new Entity(snappedEnt[0], snappedEnt[1], "PlayerSpawn"),
       );
@@ -628,7 +634,7 @@ canvas.addEventListener("mousemove", (e) => {
       State.offsetY = canvas.height / 2 / State.zoom - zoomCenter[1];
       break;
   }
-  dragLastWorld = [...world];
+  dragLastWorld = [world[0], world[1]];
 });
 
 window.addEventListener("mouseup", (e) => {
@@ -643,7 +649,7 @@ window.addEventListener("mouseup", (e) => {
   }
   if (!isMouseDown) return;
   isMouseDown = false;
-  const snapped = getMagneticSnapPosition(currentRawMouse, new Set(), SNAP);
+  const snapped = getMagneticSnapPosition(currentRawMouse, new Set<UUID>(), SNAP);
 
   switch (State.currentTool) {
     case TOOLS.LINE:
@@ -679,13 +685,7 @@ window.addEventListener("mouseup", (e) => {
         let anchorV = getV(State.vertices, currentAnchorId);
         let radius = Math.hypot(snapped[0] - anchorV.x, snapped[1] - anchorV.y);
         if (radius > 10) {
-          let sides = Math.max(
-            3,
-            Math.min(
-              12,
-              parseInt(document.getElementById("ngon-sides").value) || 8,
-            ),
-          );
+          let sides = getNgonSides();
           let ngonEdges = [],
             firstVId = null,
             prevVId = null;
@@ -848,9 +848,10 @@ window.addEventListener("mouseup", (e) => {
         });
 
         // Update selected tracking to use the new fused IDs
-        let newSelection = new Set();
+        let newSelection = new Set<UUID>();
         State.selectedVertices.forEach((vid) => {
-          newSelection.add(vertexMap.get(vid));
+          const mappedId = vertexMap.get(vid);
+          if (mappedId) newSelection.add(mappedId);
         });
 
         let nextState = computeStateAfterEdges(
@@ -885,7 +886,7 @@ canvas.addEventListener("dblclick", (e) => {
     let hitEdge = findEdgeAt(world);
 
     if (hitEdge) {
-      let snapW = getMagneticSnapPosition(world, new Set(), SNAP);
+      let snapW = getMagneticSnapPosition(world, new Set<UUID>(), SNAP);
       let newVId = getOrCreateVertexInPool(State.vertices, snapW[0], snapW[1]);
 
       // 1. Inherit all properties to the two new sub-edges
@@ -956,7 +957,8 @@ canvas.addEventListener("wheel", (e) => {
 });
 
 window.addEventListener("orc_inspector_change", (e) => {
-  const { id, values } = e.detail;
+  const event = e as CustomEvent;
+  const { id, values } = event.detail;
 
   if (id === "room_inspector" && State.selectedFaceId.size > 0) {
     State.faces.forEach((f) => {
@@ -997,7 +999,8 @@ window.addEventListener("orc_inspector_change", (e) => {
 });
 
 window.addEventListener("orc_inspector_action", (e) => {
-  const { id, action } = e.detail;
+  const event = e as CustomEvent;
+  const { id, action } = event.detail;
   if (
     id === "wall_inspector" &&
     action === "action_disconnect" &&
@@ -1106,7 +1109,7 @@ canvas.addEventListener(
       // 2 Fingers: Calculate Pan & Zoom natively
       const t1 = e.touches[0];
       const t2 = e.touches[1];
-      const currentCenter = [
+      const currentCenter: Point2D = [
         (t1.clientX + t2.clientX) / 2,
         (t1.clientY + t2.clientY) / 2,
       ];
@@ -1489,7 +1492,7 @@ function render() {
   });
 
   // Tools visual feedback
-  let snapped = getMagneticSnapPosition(currentRawMouse, new Set(), SNAP);
+  let snapped = getMagneticSnapPosition(currentRawMouse, new Set<UUID>(), SNAP);
   if (isMouseDown && State.currentTool === TOOLS.LINE && currentAnchorId) {
     let vAnchor = getV(State.vertices, currentAnchorId);
     if (vAnchor) {
@@ -1545,13 +1548,7 @@ function render() {
     if (vAnchor) {
       let radius = Math.hypot(snapped[0] - vAnchor.x, snapped[1] - vAnchor.y);
       if (radius > 10) {
-        let sides = Math.max(
-          3,
-          Math.min(
-            12,
-            parseInt(document.getElementById("ngon-sides").value) || 8,
-          ),
-        );
+        let sides = getNgonSides();
         ctx.beginPath();
         ctx.strokeStyle = "#ffd966";
         ctx.setLineDash([5 / State.zoom, 5 / State.zoom]);

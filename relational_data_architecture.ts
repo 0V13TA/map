@@ -10,28 +10,31 @@ export function generateUUID() {
     const r = (Math.random() * 16) | 0,
       v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
-  });
+  }) as UUID;
 }
 
-/**
- * @typedef {`${string}-${string}-${string}-${string}-${string}`} UUID
- */
+export type UUID = `${string}-${string}-${string}-${string}-${string}`;
+export type WallType = "solid" | "portal" | "door";
+export type PortalDirection = "forward" | "backward" | "both";
+export type EntityType = "PlayerSpawn" | "Enemy" | "Light" | "Prop";
+
 export class Vertex {
   /**
    * @param {number} x
    * @param {number} y
    * @param {UUID | null} [id = null]
    */
-  constructor(x, y, id = null) {
-    /** @type {UUID} */
+  id: UUID;
+  x: number;
+  y: number;
+  zFloorOffset: number;
+  zCeilOffset: number;
+
+  constructor(x: number, y: number, id: UUID | null = null) {
     this.id = id || generateUUID();
-    /** @type {number} */
     this.x = x;
-    /** @type {number} */
     this.y = y;
-    /** @type {number} */
     this.zFloorOffset = 0;
-    /** @type {number} */
     this.zCeilOffset = 0;
   }
 }
@@ -42,33 +45,39 @@ export class Edge {
    * @param {UUID} v2Id
    * @param {UUID | null} [id = null]
    */
-  constructor(v1Id, v2Id, id = null) {
-    /** @type {UUID} */
-    this.id = id || generateUUID();
-    /** @type {UUID} */
-    this.v1Id = v1Id;
-    /** @type {UUID} */
-    this.v2Id = v2Id;
+  id: UUID;
+  v1Id: UUID;
+  v2Id: UUID;
+  type: WallType;
+  portalDirection: PortalDirection;
+  targetEdgeId: UUID | null;
+  textureId: number;
 
-    /** @type {"solid" | "portal" | "door"} */
+  constructor(v1Id: UUID, v2Id: UUID, id: UUID | null = null) {
+    this.id = id || generateUUID();
+    this.v1Id = v1Id;
+    this.v2Id = v2Id;
     this.type = "solid";
-    /** @type {"forward" | "backward" | "both"} */
     this.portalDirection = "forward";
-    /** @type {UUID | null} */
     this.targetEdgeId = null;
-    /** @type {number} */
     this.textureId = 0;
   }
 }
 
 export class Entity {
   /**
-   * @param {number} y
    * @param {number} x
+   * @param {number} y
    * @param {"PlayerSpawn" | "Enemy" | "Light" | "Prop"} [type = "PlayerSpawn"] - The type of entity (e.g., "PlayerSpawn", "Enemy", "Light", "Prop")
    * @param {UUID | null} [id = null] - Optional unique identifier for the entity. If not provided, a new UUID will be generated.
    */
-  constructor(x, y, type = "PlayerSpawn", id = null) {
+  id: UUID;
+  x: number;
+  y: number;
+  type: EntityType;
+  angle: number;
+
+  constructor(x: number, y: number, type: EntityType = "PlayerSpawn", id: UUID | null = null) {
     this.id = id || generateUUID();
     this.x = x;
     this.y = y;
@@ -81,14 +90,15 @@ export class Entity {
  * @param {UUID} id
  * @param {Vertex[]} vertices
  */
-export const getV = (vertices, id) => vertices.find((v) => v.id === id);
+export const getV = (vertices: Vertex[], id: UUID) =>
+  vertices.find((v) => v.id === id);
 
 /**
  * @param {Vertex[]} vPool
  * @param {number} x
  * @param {number} y
  */
-export function getOrCreateVertexInPool(vPool, x, y) {
+export function getOrCreateVertexInPool(vPool: Vertex[], x: number, y: number) {
   const existing = vPool.find((v) => Math.hypot(v.x - x, v.y - y) < 0.001);
   if (existing) return existing.id;
   const newV = new Vertex(x, y);
@@ -100,9 +110,8 @@ export function getOrCreateVertexInPool(vPool, x, y) {
  * @param {Vertex[]} vertexPool
  * @param {Edge[]} edgePool
  */
-export function buildAdjacencyMap(vertexPool, edgePool) {
-  /** @type {Map<UUID, UUID>} */
-  const adjacency = new Map();
+export function buildAdjacencyMap(vertexPool: Vertex[], edgePool: Edge[]) {
+  const adjacency = new Map<UUID, UUID[]>();
   vertexPool.forEach((v) => adjacency.set(v.id, []));
 
   edgePool.forEach((edge) => {

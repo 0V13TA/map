@@ -1,0 +1,16 @@
+{
+  "name": "orc-map-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && npm run copy:assets",
+    "copy:assets": "mkdir -p dist/levels && cp index.html index.css jszip.min.js campaign.json dist/ && cp levels/*.json dist/levels/",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  }
+}

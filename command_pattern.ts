@@ -1,11 +1,15 @@
 import { buildDCEL } from "./DCEL.js";
 import { Vertex, Edge } from "./relational_data_architecture.js";
 import { saveEditorStateToStorage, State } from "./state_persistence.js";
+import type { UUID } from "./relational_data_architecture.js";
 
 // =========================
 // COMMAND PATTERN ENGINE
 // =========================
 export class CommandHistory {
+  undoStack: GeometryChangeCommand[];
+  redoStack: GeometryChangeCommand[];
+
   constructor() {
     this.undoStack = [];
     this.redoStack = [];
@@ -47,10 +51,17 @@ export class GeometryChangeCommand {
    * @param {Edge[]} oldE
    * @param {Vertex[]} newV
    * @param {Edge[]} newE
-   * @param {Set<Vertex>} oldSel
-   * @param {Set<Vertex>} newSel
+   * @param {Set<UUID> | UUID[]} oldSel
+   * @param {Set<UUID> | UUID[]} newSel
    */
-  constructor(oldV, oldE, newV, newE, oldSel, newSel) {
+  oldV: Vertex[];
+  oldE: Edge[];
+  newV: Vertex[];
+  newE: Edge[];
+  oldSel: UUID[];
+  newSel: UUID[];
+
+  constructor(oldV: Vertex[], oldE: Edge[], newV: Vertex[], newE: Edge[], oldSel: Set<UUID> | UUID[], newSel: Set<UUID> | UUID[]) {
     this.oldV = oldV.map((v) => {
       let nv = new Vertex(v.x, v.y, v.id);
       nv.zFloorOffset = v.zFloorOffset || 0;

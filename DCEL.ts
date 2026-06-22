@@ -2,6 +2,8 @@ import {
   getV,
   buildAdjacencyMap,
   generateUUID,
+  type Edge,
+  type UUID,
 } from "./relational_data_architecture.js";
 import { State } from "./state_persistence.js";
 
@@ -9,7 +11,15 @@ import { State } from "./state_persistence.js";
 // DCEL DATA STRUCTURES & EXTRACTOR
 // =========================
 export class HalfEdge {
-  constructor(edge, originId) {
+  id: UUID;
+  edge: Edge;
+  originId: UUID;
+  twin: HalfEdge | null;
+  next: HalfEdge | null;
+  prev: HalfEdge | null;
+  face: Face | null;
+
+  constructor(edge: Edge, originId: UUID) {
     this.id = generateUUID();
     this.edge = edge;
     this.originId = originId;
@@ -21,6 +31,13 @@ export class HalfEdge {
 }
 
 export class Face {
+  id: UUID;
+  outerComponent: HalfEdge | null;
+  floorHeight: number;
+  ceilHeight: number;
+  floorColor: string;
+  ceilColor: string;
+
   constructor() {
     this.id = generateUUID();
     this.outerComponent = null;
@@ -31,7 +48,7 @@ export class Face {
   }
 }
 
-export function isPointInFace(p, face) {
+export function isPointInFace(p: [number, number], face: Face) {
   let x = p[0],
     y = p[1],
     inside = false;

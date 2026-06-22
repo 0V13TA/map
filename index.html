@@ -80,7 +80,7 @@
         type="file"
         id="file-import"
         accept=".json"
-        style="display: none"
+        class="hidden-input"
       />
       <div class="divider"></div>
     </div>
@@ -124,46 +124,14 @@
       </button>
     </div>
 
-    <div
-      id="campaign-sidebar"
-      class="ui-panel"
-      style="
-        top: 80px;
-        left: 20px;
-        flex-direction: column;
-        width: 180px;
-        gap: 8px;
-      "
-    >
-      <div
-        style="
-          color: #fff;
-          font-size: 14px;
-          font-weight: 600;
-          margin-bottom: 4px;
-        "
-      >
+    <div id="campaign-sidebar" class="ui-panel side-panel">
+      <div class="panel-title compact-title">
         Campaign Levels
       </div>
-      <div
-        id="level-list"
-        style="
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          overflow-y: auto;
-          max-height: 400px;
-        "
-      ></div>
+      <div id="level-list" class="level-list"></div>
       <button
         class="action-btn"
         id="btn-new-level"
-        style="
-          justify-content: center;
-          margin-top: 8px;
-          background: rgba(68, 255, 136, 0.1);
-          color: #44ff88;
-        "
       >
         + New Level
       </button>
@@ -190,20 +158,8 @@
       </div>
     </div>
 
-    <div
-      id="dynamic-properties-panel"
-      class="ui-panel hidden"
-      style="top: 80px; right: 20px; flex-direction: column; width: 220px"
-    >
-      <div
-        id="panel-title"
-        style="
-          color: #fff;
-          font-size: 14px;
-          font-weight: 600;
-          margin-bottom: 8px;
-        "
-      >
+    <div id="dynamic-properties-panel" class="ui-panel hidden property-panel">
+      <div id="panel-title" class="panel-title">
         Properties
       </div>
       <div id="panel-content"></div>

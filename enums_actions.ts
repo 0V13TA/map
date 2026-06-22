@@ -7,7 +7,9 @@ export const TOOLS = {
   ZOOM: "zoom",
   DRAG: "drag",
   ENTITY: "entity",
-};
+} as const;
+
+export type Tool = (typeof TOOLS)[keyof typeof TOOLS];
 
 export const ACTIONS = {
   UNDO: "undo",
@@ -27,9 +29,11 @@ export const ACTIONS = {
 
   DELETE_SELECTION: "delete_selection",
   ROTATE_SELECTION: "rotate_selection",
-};
+} as const;
 
-export const DEFAULT_KEY_BINDINGS = {
+export type Action = (typeof ACTIONS)[keyof typeof ACTIONS];
+
+export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   "Ctrl+KeyZ": ACTIONS.UNDO,
   "Ctrl+KeyY": ACTIONS.REDO,
   "Ctrl+KeyA": ACTIONS.SELECT_ALL,

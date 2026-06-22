@@ -1,4 +1,4 @@
-import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
+import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS, type Action } from "./enums_actions.js";
 import {
   State,
   Campaign,
@@ -9,17 +9,61 @@ import {
 } from "./state_persistence.js";
 import { exportMapData, importMapData } from "./serialization.js";
 
+type InspectorValue = string | number;
+
+type InspectorField = {
+  label: string;
+  key: string;
+  type: "number" | "color" | "select" | "button";
+  value?: InspectorValue;
+  min?: number;
+  max?: number;
+  step?: number;
+  wrap?: boolean;
+  options?: string[];
+  readOnly?: boolean;
+};
+
+type InspectorConfig = {
+  id: string;
+  title?: string;
+};
+
+type InspectorElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
+
+function toolFromDatasetValue(value: string | null) {
+  return Object.values(TOOLS).find((tool) => tool === value) || null;
+}
+
+function isAction(value: string | null): value is Action {
+  return Object.values(ACTIONS).some((action) => action === value);
+}
+
 // ============================================================================
 // ORC_Inspector: Generic, Agnostic UI Component Library
 // ============================================================================
 export class ORC_Inspector {
+  parent: HTMLElement;
+  id: string;
+  title: string;
+  schema: InspectorField[];
+  eventTarget: EventTarget;
+  state: Record<string, InspectorValue>;
+  elements: Record<string, InspectorElement>;
+  container: HTMLDivElement;
+
   /**
    * @param {HTMLElement} parentElement - Container to append into.
    * @param {Object} config - Configuration object containing { id, title }.
    * @param {Array<Object>} schema - Blueprint configuration array for fields.
    * @param {EventTarget} [eventTarget=window] - Injected event bus for portability.
    */
-  constructor(parentElement, config, schema, eventTarget = window) {
+  constructor(
+    parentElement: HTMLElement,
+    config: InspectorConfig,
+    schema: InspectorField[],
+    eventTarget: EventTarget = window,
+  ) {
     if (!config || !config.id) {
       throw new Error(
         "ORC_Inspector Error: 'config.id' is compulsory for event routing.",
@@ -57,7 +101,7 @@ export class ORC_Inspector {
   /**
    * Internal Field Factory: Handles creation and validation logic agnostically.
    */
-  createField(field) {
+  createField(field: InspectorField) {
     // Seed initial state
     this.state[field.key] =
       field.value !== undefined
@@ -75,23 +119,24 @@ export class ORC_Inspector {
     label.textContent = field.label;
     row.appendChild(label);
 
-    let input;
+    let input: HTMLInputElement | HTMLSelectElement | undefined;
 
     if (field.type === "number") {
       input = document.createElement("input");
       input.type = "number";
       input.className = "tool-input";
-      input.value = this.state[field.key];
+      input.value = String(this.state[field.key]);
 
       // Generic Validation Attributes
-      if (field.min !== undefined) input.min = field.min;
+      if (field.min !== undefined) input.min = String(field.min);
       // NEW: Do NOT enforce a hard HTML max if we want it to infinitely wrap around!
-      if (field.max !== undefined && !field.wrap) input.max = field.max;
-      if (field.step !== undefined) input.step = field.step;
+      if (field.max !== undefined && !field.wrap) input.max = String(field.max);
+      if (field.step !== undefined) input.step = String(field.step);
 
       // Handle the value as it changes (typing or clicking arrows)
       input.addEventListener("input", (e) => {
-        let val = parseFloat(e.target.value);
+        const target = e.target as HTMLInputElement;
+        let val = parseFloat(target.value);
         // Allow the user to temporarily clear the box or type a minus sign without it resetting to 0
         if (isNaN(val)) return;
 
@@ -111,24 +156,26 @@ export class ORC_Inspector {
       });
 
       input.addEventListener("change", (e) => {
-        e.target.value = this.state[field.key];
+        const target = e.target as HTMLInputElement;
+        target.value = String(this.state[field.key]);
       });
     } else if (field.type === "color") {
       input = document.createElement("input");
       input.type = "color";
       input.style.cssText =
         "background: transparent; border: none; cursor: pointer; width: 32px; height: 24px;";
-      input.value = this.state[field.key];
+      input.value = String(this.state[field.key]);
 
       input.addEventListener("input", (e) => {
-        this.state[field.key] = e.target.value;
+        const target = e.target as HTMLInputElement;
+        this.state[field.key] = target.value;
         this.emitChangeEvent();
       });
     } else if (field.type === "select") {
       input = document.createElement("select");
       input.className = "tool-input";
       input.style.width = "75px";
-      field.options.forEach((opt) => {
+      field.options?.forEach((opt) => {
         let option = document.createElement("option");
         option.value = opt;
         option.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
@@ -137,10 +184,15 @@ export class ORC_Inspector {
       });
 
       input.addEventListener("change", (e) => {
-        this.state[field.key] = e.target.value;
+        const target = e.target as HTMLSelectElement;
+        this.state[field.key] = target.value;
         this.emitChangeEvent();
       });
     } else if (field.readOnly) {
+      input = document.createElement("input");
+      input.type = "text";
+      input.className = "tool-input";
+      input.value = String(this.state[field.key]);
       input.disabled = true;
       input.style.opacity = "0.5";
       input.style.cursor = "not-allowed";
@@ -167,6 +219,7 @@ export class ORC_Inspector {
       return; // Skip standard label creation
     }
 
+    if (!input) return;
     this.elements[field.key] = input;
     if (input) row.appendChild(input);
     this.container.appendChild(row);
@@ -176,18 +229,18 @@ export class ORC_Inspector {
    * Bulk updates the inspector state programmatically.
    * @param {Object} valueMap - Dictionary of key/value pairs to update.
    */
-  setValues(valueMap) {
+  setValues(valueMap: Record<string, InspectorValue>) {
     for (const [key, newValue] of Object.entries(valueMap)) {
       if (this.elements[key]) {
         this.state[key] = newValue;
-        this.elements[key].value = newValue;
+        this.elements[key].value = String(newValue);
       }
     }
   }
-  toggleVisibility(key, isVisible) {
+  toggleVisibility(key: string, isVisible: boolean) {
     if (this.elements[key]) {
       const el = this.elements[key];
-      const target = el.parentElement.classList.contains("prop-row")
+      const target = el.parentElement?.classList.contains("prop-row")
         ? el.parentElement
         : el;
       target.style.display = isVisible
@@ -245,10 +298,10 @@ export const UI = {
   activeListeningRow: null,
 
   // Inspector Instance Hooks
-  roomInspector: ORC_Inspector,
-  wallInspector: ORC_Inspector,
-  vertexInspector: ORC_Inspector,
-  entityInspector: ORC_Inspector,
+  roomInspector: null as ORC_Inspector | null,
+  wallInspector: null as ORC_Inspector | null,
+  vertexInspector: null as ORC_Inspector | null,
+  entityInspector: null as ORC_Inspector | null,
 
   init() {
     // 1. Bootstrap the Retained-Mode Inspectors
@@ -347,8 +400,8 @@ export const UI = {
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const targetTool = btn.getAttribute("data-tool");
-        if (targetTool) {
-          const newTool = TOOLS[targetTool.toUpperCase()];
+        const newTool = toolFromDatasetValue(targetTool);
+        if (newTool) {
 
           // NEW: Only clear selection if we are actually changing to a different tool
           if (State.currentTool !== newTool) {
@@ -421,15 +474,17 @@ export const UI = {
       .getElementById("btn-import")
       .addEventListener("click", () => fileImport.click());
     fileImport.addEventListener("change", (e) => {
-      const file = e.target.files[0];
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (evt) => {
-        importMapData(evt.target.result);
+      reader.onload = () => {
+        if (typeof reader.result !== "string") return;
+        importMapData(reader.result);
         this.updateToolUI();
       };
       reader.readAsText(file);
-      e.target.value = "";
+      input.value = "";
     });
 
     window.addEventListener(
@@ -477,28 +532,20 @@ export const UI = {
     list.innerHTML = "";
 
     Campaign.levels.forEach((level, index) => {
-      // Create a flex container for the row
       const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.gap = "4px";
-      row.style.width = "100%";
+      row.className = "level-row";
 
-      // The main Level Selection button
       const btn = document.createElement("button");
       btn.className =
         "action-btn level-btn" +
         (index === Campaign.activeLevelIndex ? " active" : "");
       btn.textContent = level.name;
-      btn.style.flexGrow = "1";
       btn.addEventListener("click", () => switchLevel(index));
 
       const delBtn = document.createElement("button");
-      delBtn.className = "action-btn";
-      delBtn.innerHTML = "🗑️";
+      delBtn.className = "action-btn level-delete-btn";
+      delBtn.textContent = "Delete";
       delBtn.title = "Delete Level";
-      delBtn.style.padding = "4px 8px";
-      delBtn.style.background = "rgba(255, 68, 68, 0.1)";
-      delBtn.style.color = "#ff4444";
 
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -642,6 +689,7 @@ export const UI = {
   handleRemapCapture(e) {
     if (!this.activeListeningRow) return;
     const actionTarget = this.activeListeningRow.getAttribute("data-action");
+    if (!isAction(actionTarget)) return;
     if (
       [
         "ControlLeft",

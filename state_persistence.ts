@@ -1,12 +1,40 @@
-import { TOOLS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
-import { Vertex, Edge, Entity } from "./relational_data_architecture.js";
-import { buildDCEL } from "./DCEL.js";
+import { TOOLS, DEFAULT_KEY_BINDINGS, type Action, type Tool } from "./enums_actions.js";
+import { Vertex, Edge, Entity, type UUID } from "./relational_data_architecture.js";
+import { buildDCEL, type Face, type HalfEdge } from "./DCEL.js";
 import { GeometryChangeCommand } from "./command_pattern.js";
+import type { CommandHistory } from "./command_pattern.js";
+
+type RawStateSnapshot = ReturnType<typeof getRawStateSnapshot>;
+
+type CampaignLevel = {
+  id: string;
+  name: string;
+  rawData: RawStateSnapshot | null;
+};
+
+type EditorState = {
+  vertices: Vertex[];
+  edges: Edge[];
+  faces: Face[];
+  halfEdges: HalfEdge[];
+  selectedVertices: Set<UUID>;
+  selectedFaceId: Set<UUID>;
+  selectedEdgeId: Set<UUID>;
+  entities: Entity[];
+  selectedEntityIds: Set<UUID>;
+  currentTool: Tool;
+  keyBindings: Record<string, Action>;
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
+  showTriangulationWireframes: boolean;
+  History: CommandHistory | null;
+};
 
 // ==========================================
 // CENTRAL STATE MANAGER
 // ==========================================
-export const State = {
+export const State: EditorState = {
   vertices: [],
   edges: [],
   faces: [],
@@ -28,7 +56,11 @@ export const State = {
 // ==========================================
 // CAMPAIGN MANAGER (State Swapper)
 // ==========================================
-export const Campaign = {
+export const Campaign: {
+  name: string;
+  activeLevelIndex: number;
+  levels: CampaignLevel[];
+} = {
   name: "ORC_Campaign",
   activeLevelIndex: 0,
   levels: [{ id: "level_01", name: "Level 1", rawData: null }],

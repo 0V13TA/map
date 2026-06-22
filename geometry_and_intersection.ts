@@ -8,6 +8,9 @@ import {
   getOrCreateVertexInPool,
 } from "./relational_data_architecture.js";
 import { State } from "./state_persistence.js";
+import type { UUID } from "./relational_data_architecture.js";
+
+export type Point2D = [number, number];
 
 export const HIT_RADIUS =
   typeof window !== "undefined" &&
@@ -18,7 +21,7 @@ export const HIT_RADIUS =
 /**
  * @param {number} wPos
  */
-export function findPortalArrowAt(wPos, r = HIT_RADIUS / State.zoom) {
+export function findPortalArrowAt(wPos: Point2D, r = HIT_RADIUS / State.zoom) {
   for (let edge of State.edges) {
     if (edge.type !== "portal") continue;
 
@@ -53,15 +56,15 @@ export function findPortalArrowAt(wPos, r = HIT_RADIUS / State.zoom) {
   return null;
 }
 
-export function worldFromMouse(x, y) {
+export function worldFromMouse(x: number, y: number): Point2D {
   return [x / State.zoom - State.offsetX, y / State.zoom - State.offsetY];
 }
 
-export function snapPoint(p, SNAP) {
+export function snapPoint(p: Point2D, SNAP: number): Point2D {
   return [Math.round(p[0] / SNAP) * SNAP, Math.round(p[1] / SNAP) * SNAP];
 }
 
-export function isPointInSelectionBounds(p) {
+export function isPointInSelectionBounds(p: Point2D) {
   if (State.selectedVertices.size <= 1) return false;
 
   let xMin = Infinity,
@@ -173,7 +176,7 @@ export function computeStateAfterEdges(
   return { newV: clearV, newE: tempE };
 }
 
-function distanceToEdge(vertices, p, edge) {
+function distanceToEdge(vertices: Vertex[], p: Point2D, edge: Edge) {
   let v1 = getV(vertices, edge.v1Id),
     v2 = getV(vertices, edge.v2Id);
   if (!v1 || !v2) return Infinity;
@@ -193,14 +196,14 @@ function distanceToEdge(vertices, p, edge) {
   );
 }
 
-export function findVertexAt(wPos, r = HIT_RADIUS / State.zoom) {
+export function findVertexAt(wPos: Point2D, r = HIT_RADIUS / State.zoom) {
   return (
     State.vertices.find((v) => Math.hypot(v.x - wPos[0], v.y - wPos[1]) < r) ||
     null
   );
 }
 
-export function findEdgeAt(wPos, r = HIT_RADIUS / State.zoom) {
+export function findEdgeAt(wPos: Point2D, r = HIT_RADIUS / State.zoom) {
   return (
     State.edges.find((e) => distanceToEdge(State.vertices, wPos, e) < r) || null
   );
@@ -211,7 +214,11 @@ export function findEdgeAt(wPos, r = HIT_RADIUS / State.zoom) {
  *  @param {Set<UUID>} ignoreVertexIds
  *  @param {number} snapGridSize
  */
-export function getMagneticSnapPosition(p, ignoreVertexIds, snapGridSize) {
+export function getMagneticSnapPosition(
+  p: Point2D,
+  ignoreVertexIds: Set<UUID>,
+  snapGridSize: number,
+): Point2D {
   let snapRadius = HIT_RADIUS / State.zoom;
 
   // 1. Vertex-to-Vertex Snapping (Highest Priority)
@@ -224,7 +231,7 @@ export function getMagneticSnapPosition(p, ignoreVertexIds, snapGridSize) {
 
   // 2. Vertex-to-Edge Snapping (Vector Projection)
   let minDistance = snapRadius;
-  let closestPoint = null;
+  let closestPoint: Point2D | null = null;
 
   for (let edge of State.edges) {
     // Don't snap to an edge that is currently being moved
