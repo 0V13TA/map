@@ -492,7 +492,6 @@ export const UI = {
       btn.style.flexGrow = "1";
       btn.addEventListener("click", () => switchLevel(index));
 
-      // The Delete button
       const delBtn = document.createElement("button");
       delBtn.className = "action-btn";
       delBtn.innerHTML = "🗑️";
@@ -502,7 +501,7 @@ export const UI = {
       delBtn.style.color = "#ff4444";
 
       delBtn.addEventListener("click", (e) => {
-        e.stopPropagation(); // Prevents the click from accidentally triggering the switchLevel button underneath!
+        e.stopPropagation();
         deleteLevel(index);
       });
 
