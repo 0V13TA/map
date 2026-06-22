@@ -1,4 +1,9 @@
-import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS, type Action } from "./enums_actions.js";
+import {
+  TOOLS,
+  ACTIONS,
+  DEFAULT_KEY_BINDINGS,
+  type Action,
+} from "./enums_actions.js";
 import {
   State,
   Campaign,
@@ -29,7 +34,10 @@ type InspectorConfig = {
   title?: string;
 };
 
-type InspectorElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
+type InspectorElement =
+  | HTMLInputElement
+  | HTMLSelectElement
+  | HTMLButtonElement;
 
 function toolFromDatasetValue(value: string | null) {
   return Object.values(TOOLS).find((tool) => tool === value) || null;
@@ -402,7 +410,6 @@ export const UI = {
         const targetTool = btn.getAttribute("data-tool");
         const newTool = toolFromDatasetValue(targetTool);
         if (newTool) {
-
           // NEW: Only clear selection if we are actually changing to a different tool
           if (State.currentTool !== newTool) {
             State.selectedFaceId.clear();
@@ -533,19 +540,25 @@ export const UI = {
 
     Campaign.levels.forEach((level, index) => {
       const row = document.createElement("div");
-      row.className = "level-row";
+      row.style.display = "flex";
+      row.style.gap = "4px";
+      row.style.width = "100%";
 
       const btn = document.createElement("button");
       btn.className =
         "action-btn level-btn" +
         (index === Campaign.activeLevelIndex ? " active" : "");
       btn.textContent = level.name;
+      btn.style.flexGrow = "1";
       btn.addEventListener("click", () => switchLevel(index));
 
       const delBtn = document.createElement("button");
-      delBtn.className = "action-btn level-delete-btn";
-      delBtn.textContent = "Delete";
+      delBtn.className = "action-btn";
+      delBtn.innerHTML = "🗑️";
       delBtn.title = "Delete Level";
+      delBtn.style.padding = "4px 8px";
+      delBtn.style.background = "rgba(255, 68, 68, 0.1)";
+      delBtn.style.color = "#ff4444";
 
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();

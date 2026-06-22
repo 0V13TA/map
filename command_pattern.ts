@@ -18,7 +18,7 @@ export class CommandHistory {
   /**
    * @param {GeometryChangeCommand} command
    */
-  execute(command) {
+  execute(command: GeometryChangeCommand) {
     command.execute();
     this.undoStack.push(command);
     this.redoStack = [];
@@ -61,7 +61,14 @@ export class GeometryChangeCommand {
   oldSel: UUID[];
   newSel: UUID[];
 
-  constructor(oldV: Vertex[], oldE: Edge[], newV: Vertex[], newE: Edge[], oldSel: Set<UUID> | UUID[], newSel: Set<UUID> | UUID[]) {
+  constructor(
+    oldV: Vertex[],
+    oldE: Edge[],
+    newV: Vertex[],
+    newE: Edge[],
+    oldSel: Set<UUID> | UUID[],
+    newSel: Set<UUID> | UUID[],
+  ) {
     this.oldV = oldV.map((v) => {
       let nv = new Vertex(v.x, v.y, v.id);
       nv.zFloorOffset = v.zFloorOffset || 0;
@@ -110,6 +117,10 @@ export class GeometryChangeCommand {
       return ne;
     });
     State.selectedVertices = new Set(this.newSel);
+
+    // NEW: Prevent UI crashes by clearing ghost selections!
+    State.selectedEdgeId.clear();
+    State.selectedFaceId.clear();
   }
 
   undo() {
@@ -128,5 +139,9 @@ export class GeometryChangeCommand {
       return ne;
     });
     State.selectedVertices = new Set(this.oldSel);
+
+    // NEW: Prevent UI crashes by clearing ghost selections!
+    State.selectedEdgeId.clear();
+    State.selectedFaceId.clear();
   }
 }

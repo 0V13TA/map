@@ -1,5 +1,15 @@
-import { TOOLS, DEFAULT_KEY_BINDINGS, type Action, type Tool } from "./enums_actions.js";
-import { Vertex, Edge, Entity, type UUID } from "./relational_data_architecture.js";
+import {
+  TOOLS,
+  DEFAULT_KEY_BINDINGS,
+  type Action,
+  type Tool,
+} from "./enums_actions.js";
+import {
+  Vertex,
+  Edge,
+  Entity,
+  type UUID,
+} from "./relational_data_architecture.js";
 import { buildDCEL, type Face, type HalfEdge } from "./DCEL.js";
 import { GeometryChangeCommand } from "./command_pattern.js";
 import type { CommandHistory } from "./command_pattern.js";
@@ -275,14 +285,11 @@ export function loadEditorStateFromStorage() {
   }
 }
 
-export function deleteLevel(index) {
-  // 1. Prevent deleting the very last level
+export function deleteLevel(index: number) {
   if (Campaign.levels.length <= 1) {
     alert("You must have at least one level in your campaign!");
     return;
   }
-
-  // 2. Ask for confirmation so you don't lose hours of work by misclicking!
   if (
     !confirm(
       `Are you sure you want to delete "${Campaign.levels[index].name}"? This cannot be undone.`,
@@ -291,27 +298,17 @@ export function deleteLevel(index) {
     return;
   }
 
-  // 3. Handle the deletion safely
   if (index === Campaign.activeLevelIndex) {
-    // We are deleting the level we are currently looking at!
     Campaign.levels.splice(index, 1);
-
-    // Shift the active index if we deleted the bottom-most level
     Campaign.activeLevelIndex = Math.min(index, Campaign.levels.length - 1);
-
-    // Wake up the neighboring level to replace the deleted one on the canvas
     applyRawStateSnapshot(Campaign.levels[Campaign.activeLevelIndex].rawData);
   } else {
-    // We are deleting a background level
     Campaign.levels.splice(index, 1);
-
-    // If the deleted level was ABOVE our active level in the list, we need to shift our active index down by 1
     if (Campaign.activeLevelIndex > index) {
       Campaign.activeLevelIndex--;
     }
   }
 
-  // 4. Save and force the UI to redraw the sidebar
   saveEditorStateToStorage();
   window.dispatchEvent(new Event("orc_level_switched"));
 }

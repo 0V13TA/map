@@ -51,7 +51,9 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20.0;
 
 function getNgonSides() {
-  const input = document.getElementById("ngon-sides") as HTMLInputElement | null;
+  const input = document.getElementById(
+    "ngon-sides",
+  ) as HTMLInputElement | null;
   return Math.max(3, Math.min(12, parseInt(input?.value || "", 10) || 8));
 }
 
@@ -649,7 +651,11 @@ window.addEventListener("mouseup", (e) => {
   }
   if (!isMouseDown) return;
   isMouseDown = false;
-  const snapped = getMagneticSnapPosition(currentRawMouse, new Set<UUID>(), SNAP);
+  const snapped = getMagneticSnapPosition(
+    currentRawMouse,
+    new Set<UUID>(),
+    SNAP,
+  );
 
   switch (State.currentTool) {
     case TOOLS.LINE:
@@ -861,11 +867,11 @@ window.addEventListener("mouseup", (e) => {
         );
         State.History.execute(
           new GeometryChangeCommand(
-            initialDragStateSnapshot.v,
-            initialDragStateSnapshot.e,
+            actionStartSnapshot.v, // FIXED: Was initialDragStateSnapshot.v
+            actionStartSnapshot.e, // FIXED: Was initialDragStateSnapshot.e
             nextState.newV,
             nextState.newE,
-            State.selectedVertices,
+            actionStartSnapshot.sel, // FIXED: Was State.selectedVertices
             newSelection,
           ),
         );
