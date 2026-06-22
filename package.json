@@ -1,16 +1,20 @@
 {
   "name": "orc-map-editor",
-  "version": "0.1.0",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "tsc && npm run copy:assets",
-    "copy:assets": "mkdir -p dist/levels && cp index.html index.css jszip.min.js campaign.json dist/ && cp levels/*.json dist/levels/",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "dev": "vite --host 0.0.0.0 --port 8080",
+    "build": "tsc --noEmit && vite build",
+    "build:dev": "vite build --mode development",
+    "preview": "vite preview --host 0.0.0.0 --port 8080"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "@types/node": "^20.14.10",
-    "typescript": "^5.5.4"
+    "@types/jszip": "^3.4.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
   }
 }
