@@ -116,12 +116,31 @@ export class ORC_Inspector {
         this.state[field.key] = e.target.value;
         this.emitChangeEvent();
       });
-    }
-
-    if (field.readOnly) {
+    } else if (field.readOnly) {
       input.disabled = true;
       input.style.opacity = "0.5";
       input.style.cursor = "not-allowed";
+    } else if (field.type === "button") {
+      const btn = document.createElement("button");
+      btn.className = "action-btn dest-btn"; // Reuses your red danger styling
+      btn.textContent = "✖ " + field.label;
+      btn.style.width = "100%";
+      btn.style.marginTop = "12px";
+      btn.style.justifyContent = "center";
+      btn.style.display = "none"; // Hidden by default
+
+      btn.addEventListener("click", () => {
+        // Broadcast an action instead of a value change
+        this.eventTarget.dispatchEvent(
+          new CustomEvent("orc_inspector_action", {
+            detail: { id: this.id, action: field.key },
+          }),
+        );
+      });
+
+      this.elements[field.key] = btn;
+      this.container.appendChild(btn);
+      return; // Skip standard label creation
     }
 
     this.elements[field.key] = input;
@@ -139,6 +158,19 @@ export class ORC_Inspector {
         this.state[key] = newValue;
         this.elements[key].value = newValue;
       }
+    }
+  }
+  toggleVisibility(key, isVisible) {
+    if (this.elements[key]) {
+      const el = this.elements[key];
+      const target = el.parentElement.classList.contains("prop-row")
+        ? el.parentElement
+        : el;
+      target.style.display = isVisible
+        ? el.tagName === "BUTTON"
+          ? "flex"
+          : "flex"
+        : "none";
     }
   }
 
@@ -189,8 +221,9 @@ export const UI = {
   activeListeningRow: null,
 
   // Inspector Instance Hooks
-  roomInspector: null,
-  wallInspector: null,
+  roomInspector: ORC_Inspector,
+  wallInspector: ORC_Inspector,
+  vertexInspector: ORC_Inspector,
 
   init() {
     // 1. Bootstrap the Retained-Mode Inspectors
@@ -234,6 +267,30 @@ export const UI = {
           value: "both",
         },
         { label: "Texture ID", key: "textureId", type: "number", value: 0 },
+        {
+          label: "Disconnect Portal",
+          key: "action_disconnect",
+          type: "button",
+        },
+      ],
+    );
+
+    this.vertexInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "vertex_inspector", title: "Vertex Slopes (Offset)" },
+      [
+        {
+          label: "Floor Z Offset",
+          key: "zFloorOffset",
+          type: "number",
+          value: 0,
+        },
+        {
+          label: "Ceil Z Offset",
+          key: "zCeilOffset",
+          type: "number",
+          value: 0,
+        },
       ],
     );
 
@@ -242,10 +299,19 @@ export const UI = {
       btn.addEventListener("click", () => {
         const targetTool = btn.getAttribute("data-tool");
         if (targetTool) {
-          State.currentTool = TOOLS[targetTool.toUpperCase()];
-          this.updateToolUI();
-          this.updatePropertiesPanel();
-          saveEditorStateToStorage();
+          const newTool = TOOLS[targetTool.toUpperCase()];
+
+          // NEW: Only clear selection if we are actually changing to a different tool
+          if (State.currentTool !== newTool) {
+            State.selectedVertices.clear();
+            State.selectedFaceId.clear();
+            State.selectedEdgeId.clear();
+
+            State.currentTool = newTool;
+            this.updateToolUI();
+            this.updatePropertiesPanel(); // This will auto-hide the panel since we cleared the IDs!
+            saveEditorStateToStorage();
+          }
         }
       });
     });
@@ -345,35 +411,42 @@ export const UI = {
   },
 
   updatePropertiesPanel() {
-    // Hide everything implicitly
     this.propertiesPanel.classList.add("hidden");
     this.roomInspector.hide();
     this.wallInspector.hide();
+    this.vertexInspector.hide();
 
-    // Selectively reveal and sync based on tool/selection context
-    if (State.currentTool === TOOLS.ROOM && State.selectedFaceId) {
-      const selectedFace = State.faces.find(
-        (f) => f.id === State.selectedFaceId,
-      );
+    // 1. Rooms Selected
+    if (State.selectedFaceId.size > 0) {
+      const firstId = Array.from(State.selectedFaceId)[0];
+      const selectedFace = State.faces.find((f) => f.id === firstId);
       if (selectedFace) {
         this.propertiesPanel.classList.remove("hidden");
+        // Update Title dynamically to show multi-select
+        this.roomInspector.container.querySelector(".panel-title").textContent =
+          State.selectedFaceId.size > 1
+            ? `Rooms (${State.selectedFaceId.size})`
+            : "Room Properties";
 
-        // Beautiful, bulk programmatic sync
         this.roomInspector.setValues({
           floorHeight: selectedFace.floorHeight,
           ceilHeight: selectedFace.ceilHeight,
           floorColor: selectedFace.floorColor,
           ceilColor: selectedFace.ceilColor,
         });
-
         this.roomInspector.show();
       }
-    } else if (State.currentTool === TOOLS.WALL && State.selectedEdgeId) {
-      const selectedEdge = State.edges.find(
-        (e) => e.id === State.selectedEdgeId,
-      );
+    }
+    // 2. Walls/Portals Selected
+    else if (State.selectedEdgeId.size > 0) {
+      const firstId = Array.from(State.selectedEdgeId)[0];
+      const selectedEdge = State.edges.find((e) => e.id === firstId);
       if (selectedEdge) {
         this.propertiesPanel.classList.remove("hidden");
+        this.wallInspector.container.querySelector(".panel-title").textContent =
+          State.selectedEdgeId.size > 1
+            ? `Walls (${State.selectedEdgeId.size})`
+            : "Wall Properties";
 
         this.wallInspector.setValues({
           type: selectedEdge.type,
@@ -381,7 +454,32 @@ export const UI = {
           textureId: selectedEdge.textureId,
         });
 
+        const anyLinked = Array.from(State.selectedEdgeId).some((id) => {
+          const e = State.edges.find((edge) => edge.id === id);
+          return e && e.type === "portal" && e.targetEdgeId;
+        });
+        this.wallInspector.toggleVisibility("action_disconnect", anyLinked);
         this.wallInspector.show();
+      }
+    }
+    // 3. Vertices Selected
+    else if (State.selectedVertices.size > 0) {
+      const firstId = Array.from(State.selectedVertices)[0];
+      const selectedV = State.vertices.find((v) => v.id === firstId);
+      if (selectedV) {
+        this.propertiesPanel.classList.remove("hidden");
+        this.vertexInspector.container.querySelector(
+          ".panel-title",
+        ).textContent =
+          State.selectedVertices.size > 1
+            ? `Vertices (${State.selectedVertices.size})`
+            : "Vertex Slopes";
+
+        this.vertexInspector.setValues({
+          zFloorOffset: selectedV.zFloorOffset || 0,
+          zCeilOffset: selectedV.zCeilOffset || 0,
+        });
+        this.vertexInspector.show();
       }
     }
   },

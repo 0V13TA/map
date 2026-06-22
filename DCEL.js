@@ -1,4 +1,8 @@
-import { getV, buildAdjacencyMap } from "./relational_data_architecture.js";
+import {
+  getV,
+  buildAdjacencyMap,
+  generateUUID,
+} from "./relational_data_architecture.js";
 import { State } from "./state_persistence.js";
 
 // =========================
@@ -6,7 +10,7 @@ import { State } from "./state_persistence.js";
 // =========================
 export class HalfEdge {
   constructor(edge, originId) {
-    this.id = crypto.randomUUID();
+    this.id = generateUUID();
     this.edge = edge;
     this.originId = originId;
     this.twin = null;
@@ -18,7 +22,7 @@ export class HalfEdge {
 
 export class Face {
   constructor() {
-    this.id = crypto.randomUUID();
+    this.id = generateUUID();
     this.outerComponent = null;
     this.floorHeight = 0;
     this.ceilHeight = 64;

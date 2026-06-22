@@ -15,8 +15,10 @@ import {
   findEdgeAt,
   findVertexAt,
   worldFromMouse,
+  findPortalArrowAt,
   computeStateAfterEdges,
   isPointInSelectionBounds,
+  getMagneticSnapPosition,
 } from "./geometry_and_intersection.js";
 import {
   getV,
@@ -45,6 +47,9 @@ canvas.focus();
 const SNAP = 10;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20.0;
+
+/** @type {import("./relational_data_architecture.js").UUID} */
+let draggingPortalId = null;
 
 let isMouseDown = false;
 let currentAnchorId = null;
@@ -86,20 +91,26 @@ canvas.addEventListener("keydown", (e) => {
       State.vertices.forEach((v) => State.selectedVertices.add(v.id));
       break;
     case ACTIONS.SET_TOOL_LINE:
-      State.currentTool = TOOLS.LINE;
-      break;
-    case ACTIONS.SET_TOOL_SPLIT:
-      State.currentTool = TOOLS.SPLIT;
-      break;
     case ACTIONS.SET_TOOL_NGON:
-      State.currentTool = TOOLS.NGON;
-      break;
     case ACTIONS.SET_TOOL_ZOOM:
-      State.currentTool = TOOLS.ZOOM;
+    case ACTIONS.SET_TOOL_DRAG: {
+      const toolMap = {
+        [ACTIONS.SET_TOOL_LINE]: TOOLS.LINE,
+        [ACTIONS.SET_TOOL_NGON]: TOOLS.NGON,
+        [ACTIONS.SET_TOOL_ZOOM]: TOOLS.ZOOM,
+        [ACTIONS.SET_TOOL_DRAG]: TOOLS.DRAG,
+      };
+
+      const newTool = toolMap[action];
+      if (State.currentTool !== newTool) {
+        State.selectedVertices.clear();
+        State.selectedFaceId.clear();
+        State.selectedEdgeId.clear();
+        State.currentTool = newTool;
+      }
       break;
-    case ACTIONS.SET_TOOL_DRAG:
-      State.currentTool = TOOLS.DRAG;
-      break;
+    }
+
     case ACTIONS.PAN_UP:
       State.offsetY += 40 / State.zoom;
       break;
@@ -113,22 +124,20 @@ canvas.addEventListener("keydown", (e) => {
       State.offsetX -= 40 / State.zoom;
       break;
     case ACTIONS.DELETE_SELECTION:
-      // 1. Precise Face Deletion
-      if (State.selectedFaceId) {
+      if (State.selectedFaceId.size > 0) {
         let edgesToRemove = new Set();
         let faceHalfEdges = State.halfEdges.filter(
-          (he) => he.face && he.face.id === State.selectedFaceId,
+          (he) => he.face && State.selectedFaceId.has(he.face.id),
         );
 
         faceHalfEdges.forEach((he) => {
-          // If the twin doesn't belong to a face, it's an outer boundary exclusive to this room
-          if (!he.twin.face) {
+          // If the twin wall points outside, OR it points to another face that is ALSO being deleted, wipe it!
+          if (!he.twin.face || State.selectedFaceId.has(he.twin.face.id)) {
             edgesToRemove.add(he.edge.id);
           }
         });
 
         const newE = State.edges.filter((e) => !edgesToRemove.has(e.id));
-        // Clean up orphan vertices safely
         const newV = State.vertices.filter((v) =>
           newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
         );
@@ -143,14 +152,11 @@ canvas.addEventListener("keydown", (e) => {
             [],
           ),
         );
-        State.selectedFaceId = null;
+        State.selectedFaceId.clear();
         State.selectedVertices.clear();
         UI.updatePropertiesPanel();
-      }
-      // 2. Precise Edge Deletion
-      else if (State.selectedEdgeId && State.selectedVertices.size <= 2) {
-        const newE = State.edges.filter((e) => e.id !== State.selectedEdgeId);
-        // Clean up orphan vertices safely
+      } else if (State.selectedEdgeId.size > 0) {
+        const newE = State.edges.filter((e) => !State.selectedEdgeId.has(e.id));
         const newV = State.vertices.filter((v) =>
           newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
         );
@@ -165,12 +171,10 @@ canvas.addEventListener("keydown", (e) => {
             [],
           ),
         );
-        State.selectedEdgeId = null;
+        State.selectedEdgeId.clear();
         State.selectedVertices.clear();
         UI.updatePropertiesPanel();
-      }
-      // 3. Fallback to standard mass-vertex deletion
-      else if (State.selectedVertices.size > 0) {
+      } else if (State.selectedVertices.size > 0) {
         const newE = State.edges.filter(
           (e) =>
             !State.selectedVertices.has(e.v1Id) &&
@@ -189,8 +193,8 @@ canvas.addEventListener("keydown", (e) => {
             [],
           ),
         );
-        State.selectedEdgeId = null;
-        State.selectedFaceId = null;
+        State.selectedEdgeId.clear();
+        State.selectedFaceId.clear();
       }
       break;
     case ACTIONS.ROTATE_SELECTION:
@@ -205,7 +209,12 @@ canvas.addEventListener("keydown", (e) => {
         cx /= State.selectedVertices.size;
         cy /= State.selectedVertices.size;
         let angle = 15 * (Math.PI / 180);
-        let origV = State.vertices.map((v) => new Vertex(v.x, v.y, v.id));
+        let origV = State.vertices.map((v) => {
+          let nv = new Vertex(v.x, v.y, v.id);
+          nv.zFloorOffset = v.zFloorOffset || 0;
+          nv.zCeilOffset = v.zCeilOffset || 0;
+          return nv;
+        });
         let origE = State.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
 
         State.selectedVertices.forEach((vid) => {
@@ -222,9 +231,14 @@ canvas.addEventListener("keydown", (e) => {
           if (
             State.selectedVertices.has(e.v1Id) ||
             State.selectedVertices.has(e.v2Id)
-          )
-            movedEdges.push(new Edge(e.v1Id, e.v2Id, e.id));
-          else staticEdges.push(e);
+          ) {
+            let ne = new Edge(e.v1Id, e.v2Id, e.id);
+            ne.type = e.type;
+            ne.portalDirection = e.portalDirection;
+            ne.textureId = e.textureId;
+            ne.targetEdgeId = e.targetEdgeId;
+            movedEdges.push(ne);
+          } else staticEdges.push(e);
         });
         let state = computeStateAfterEdges(
           State.vertices,
@@ -268,12 +282,18 @@ canvas.addEventListener("mousedown", (e) => {
   const world = worldFromMouse(screen[0], screen[1]);
 
   actionStartSnapshot = {
-    v: State.vertices.map((v) => new Vertex(v.x, v.y, v.id)),
+    v: State.vertices.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    }),
     e: State.edges.map((e) => {
       let edge = new Edge(e.v1Id, e.v2Id, e.id);
       edge.type = e.type;
       edge.portalDirection = e.portalDirection;
       edge.textureId = e.textureId;
+      edge.targetEdgeId = e.targetEdgeId; // NEW
       return edge;
     }),
     sel: new Set(State.selectedVertices),
@@ -288,7 +308,7 @@ canvas.addEventListener("mousedown", (e) => {
       if (e.altKey) return;
       let hitV = findVertexAt(world);
       if (!hitV) {
-        let snapped = snapPoint(world, SNAP);
+        let snapped = getMagneticSnapPosition(world, new Set(), SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           State.vertices,
           snapped[0],
@@ -300,7 +320,7 @@ canvas.addEventListener("mousedown", (e) => {
     case TOOLS.NGON:
       if (e.altKey) return;
       if (!currentAnchorId) {
-        let snapped = snapPoint(world, SNAP);
+        let snapped = getMagneticSnapPosition(world, new Set(), SNAP);
         currentAnchorId = getOrCreateVertexInPool(
           State.vertices,
           snapped[0],
@@ -309,49 +329,22 @@ canvas.addEventListener("mousedown", (e) => {
       }
       break;
 
-    case TOOLS.SPLIT:
-      if (e.altKey) return;
-      let hitEdge = findEdgeAt(world);
-      if (hitEdge) {
-        let snapW = snapPoint(world, SNAP);
-        let newVId = getOrCreateVertexInPool(
-          State.vertices,
-          snapW[0],
-          snapW[1],
-        );
-        let e1 = new Edge(hitEdge.v1Id, newVId);
-        e1.type = hitEdge.type;
-        e1.portalDirection = hitEdge.portalDirection;
-        e1.textureId = hitEdge.textureId;
-
-        let e2 = new Edge(newVId, hitEdge.v2Id);
-        e2.type = hitEdge.type;
-        e2.portalDirection = hitEdge.portalDirection;
-        e2.textureId = hitEdge.textureId;
-
-        let nextE = State.edges.filter((e) => e.id !== hitEdge.id);
-        nextE.push(e1, e2);
-        let state = computeStateAfterEdges(State.vertices, nextE, []);
-
-        State.History.execute(
-          new GeometryChangeCommand(
-            actionStartSnapshot.v, // Use pristine snapshot
-            actionStartSnapshot.e,
-            state.newV,
-            state.newE,
-            actionStartSnapshot.sel,
-            State.selectedVertices,
-          ),
-        );
-      }
-      break;
-
     case TOOLS.DRAG:
       if (e.altKey) return;
+
+      let grabArrow = findPortalArrowAt(world);
+      if (grabArrow) {
+        draggingPortalId = grabArrow.id;
+        State.selectedFaceId.clear();
+        State.selectedEdgeId.clear();
+        State.selectedEdgeId.add(grabArrow.id);
+        UI.updatePropertiesPanel();
+        return;
+      }
+
       let grabV = findVertexAt(world);
       let grabE = findEdgeAt(world);
 
-      // 1. Check if the user is clicking directly inside a solid room face
       let grabF = null;
       for (let face of State.faces) {
         if (isPointInFace(world, face)) {
@@ -361,13 +354,25 @@ canvas.addEventListener("mousedown", (e) => {
       }
 
       initialDragStateSnapshot = {
-        v: State.vertices.map((v) => new Vertex(v.x, v.y, v.id)),
-        e: State.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id)),
+        v: State.vertices.map((v) => {
+          let nv = new Vertex(v.x, v.y, v.id);
+          nv.zFloorOffset = v.zFloorOffset || 0;
+          nv.zCeilOffset = v.zCeilOffset || 0;
+          return nv;
+        }),
+        e: State.edges.map((e) => {
+          let ne = new Edge(e.v1Id, e.v2Id, e.id);
+          ne.type = e.type;
+          ne.portalDirection = e.portalDirection;
+          ne.textureId = e.textureId;
+          ne.targetEdgeId = e.targetEdgeId;
+          return ne;
+        }),
       };
 
       if (grabV) {
-        State.selectedEdgeId = null;
-        State.selectedFaceId = null; // Clear stale face selection
+        State.selectedEdgeId.clear();
+        State.selectedFaceId.clear();
         if (e.shiftKey) {
           if (State.selectedVertices.has(grabV.id))
             State.selectedVertices.delete(grabV.id);
@@ -376,53 +381,79 @@ canvas.addEventListener("mousedown", (e) => {
           State.selectedVertices.clear();
           State.selectedVertices.add(grabV.id);
         }
+        UI.updatePropertiesPanel();
       } else if (isPointInSelectionBounds(world)) {
-        // Do nothing, let mousemove handle grouping drag for existing selections
+        // Do nothing, just drag
       } else if (grabE) {
-        State.selectedEdgeId = grabE.id;
-        State.selectedFaceId = null; // Clear stale face selection
-        if (!e.shiftKey) State.selectedVertices.clear();
-        State.selectedVertices.add(grabE.v1Id);
-        State.selectedVertices.add(grabE.v2Id);
-      } else if (grabF) {
-        State.selectedEdgeId = null;
-        State.selectedFaceId = grabF.id; // Track the explicitly clicked face!
-
-        // 2. Select all vertices tracing the perimeter of the clicked room!
-        if (!e.shiftKey) State.selectedVertices.clear();
-        let loopEdge = grabF.outerComponent;
-        if (loopEdge) {
-          do {
-            State.selectedVertices.add(loopEdge.originId);
-            loopEdge = loopEdge.next;
-          } while (loopEdge && loopEdge !== grabF.outerComponent);
+        State.selectedFaceId.clear();
+        if (e.shiftKey) {
+          if (State.selectedEdgeId.has(grabE.id)) {
+            State.selectedEdgeId.delete(grabE.id);
+            State.selectedVertices.clear();
+            State.edges.forEach((edge) => {
+              if (State.selectedEdgeId.has(edge.id)) {
+                State.selectedVertices.add(edge.v1Id);
+                State.selectedVertices.add(edge.v2Id);
+              }
+            });
+          } else {
+            State.selectedEdgeId.add(grabE.id);
+            State.selectedVertices.add(grabE.v1Id);
+            State.selectedVertices.add(grabE.v2Id);
+          }
+        } else if (!State.selectedEdgeId.has(grabE.id)) {
+          State.selectedEdgeId.clear();
+          State.selectedVertices.clear();
+          State.selectedEdgeId.add(grabE.id);
+          State.selectedVertices.add(grabE.v1Id);
+          State.selectedVertices.add(grabE.v2Id);
         }
+        UI.updatePropertiesPanel();
+      } else if (grabF) {
+        State.selectedEdgeId.clear();
+        if (e.shiftKey) {
+          if (State.selectedFaceId.has(grabF.id)) {
+            State.selectedFaceId.delete(grabF.id);
+            State.selectedVertices.clear();
+            State.faces.forEach((face) => {
+              if (State.selectedFaceId.has(face.id)) {
+                let loopE = face.outerComponent;
+                if (loopE)
+                  do {
+                    State.selectedVertices.add(loopE.originId);
+                    loopE = loopE.next;
+                  } while (loopE && loopE !== face.outerComponent);
+              }
+            });
+          } else {
+            State.selectedFaceId.add(grabF.id);
+            let loopE = grabF.outerComponent;
+            if (loopE)
+              do {
+                State.selectedVertices.add(loopE.originId);
+                loopE = loopE.next;
+              } while (loopE && loopE !== grabF.outerComponent);
+          }
+        } else if (!State.selectedFaceId.has(grabF.id)) {
+          State.selectedFaceId.clear();
+          State.selectedVertices.clear();
+          State.selectedFaceId.add(grabF.id);
+          let loopE = grabF.outerComponent;
+          if (loopE)
+            do {
+              State.selectedVertices.add(loopE.originId);
+              loopE = loopE.next;
+            } while (loopE && loopE !== grabF.outerComponent);
+        }
+        UI.updatePropertiesPanel();
       } else {
-        State.selectedEdgeId = null;
-        State.selectedFaceId = null; // Clear stale face selection
+        State.selectedEdgeId.clear();
+        State.selectedFaceId.clear();
         if (!e.shiftKey) State.selectedVertices.clear();
         isBoxSelecting = true;
         boxStartWorld = [...world];
+        UI.updatePropertiesPanel();
       }
-      break;
-
-    case TOOLS.ROOM:
-      if (e.altKey) return;
-      State.selectedFaceId = null;
-      for (let face of State.faces) {
-        if (isPointInFace(world, face)) {
-          State.selectedFaceId = face.id;
-          break;
-        }
-      }
-      UI.updatePropertiesPanel();
-      break;
-
-    case TOOLS.WALL:
-      if (e.altKey) return;
-      let hitEdge1 = findEdgeAt(world);
-      State.selectedEdgeId = hitEdge1 ? hitEdge1.id : null;
-      UI.updatePropertiesPanel();
       break;
   }
 });
@@ -486,7 +517,7 @@ window.addEventListener("mouseup", (e) => {
   }
   if (!isMouseDown) return;
   isMouseDown = false;
-  const snapped = snapPoint(currentRawMouse, SNAP);
+  const snapped = getMagneticSnapPosition(currentRawMouse, new Set(), SNAP);
 
   switch (State.currentTool) {
     case TOOLS.LINE:
@@ -568,7 +599,57 @@ window.addEventListener("mouseup", (e) => {
       break;
 
     case TOOLS.DRAG:
-      if (isBoxSelecting) {
+      if (draggingPortalId) {
+        let dropArrow = findPortalArrowAt(currentRawMouse);
+
+        let nextE = State.edges.map((e) => {
+          let ne = new Edge(e.v1Id, e.v2Id, e.id);
+          ne.type = e.type;
+          ne.textureId = e.textureId;
+          ne.targetEdgeId = e.targetEdgeId;
+          ne.portalDirection = e.portalDirection;
+          return ne;
+        });
+
+        let sEdge = nextE.find((e) => e.id === draggingPortalId);
+
+        if (dropArrow && dropArrow.id !== draggingPortalId) {
+          let tEdge = nextE.find((e) => e.id === dropArrow.id);
+
+          // 1. Scrub the board: Break ANY existing connections pointing to EITHER portal
+          nextE.forEach((e) => {
+            if (e.targetEdgeId === sEdge.id || e.targetEdgeId === tEdge.id) {
+              e.targetEdgeId = null;
+            }
+          });
+
+          // 2. Establish the strict 1-to-1 connection
+          sEdge.targetEdgeId = tEdge.id;
+          tEdge.targetEdgeId = sEdge.id;
+        } else if (!dropArrow) {
+          // Dropped in empty space: Break the connection
+          nextE.forEach((e) => {
+            if (e.targetEdgeId === sEdge.id) {
+              e.targetEdgeId = null;
+            }
+          });
+          sEdge.targetEdgeId = null;
+        }
+
+        State.History.execute(
+          new GeometryChangeCommand(
+            actionStartSnapshot.v,
+            actionStartSnapshot.e,
+            actionStartSnapshot.v,
+            nextE,
+            actionStartSnapshot.sel,
+            State.selectedVertices,
+          ),
+        );
+
+        draggingPortalId = null;
+        return;
+      } else if (isBoxSelecting) {
         let xMin = Math.min(boxStartWorld[0], currentRawMouse[0]),
           xMax = Math.max(boxStartWorld[0], currentRawMouse[0]);
         let yMin = Math.min(boxStartWorld[1], currentRawMouse[1]),
@@ -582,19 +663,36 @@ window.addEventListener("mouseup", (e) => {
       } else if (initialDragStateSnapshot) {
         State.selectedVertices.forEach((vid) => {
           let v = getV(State.vertices, vid);
-          v.x = Math.round(v.x / SNAP) * SNAP;
-          v.y = Math.round(v.y / SNAP) * SNAP;
+          if (State.selectedVertices.size === 1) {
+            let snapped = getMagneticSnapPosition(
+              [v.x, v.y],
+              State.selectedVertices,
+              SNAP,
+            );
+            v.x = snapped[0];
+            v.y = snapped[1];
+          } else {
+            v.x = Math.round(v.x / SNAP) * SNAP;
+            v.y = Math.round(v.y / SNAP) * SNAP;
+          }
         });
+
         let staticEdges = [],
           movedEdges = [];
         State.edges.forEach((e) => {
           if (
             State.selectedVertices.has(e.v1Id) ||
             State.selectedVertices.has(e.v2Id)
-          )
-            movedEdges.push(new Edge(e.v1Id, e.v2Id, e.id));
-          else staticEdges.push(e);
+          ) {
+            let ne = new Edge(e.v1Id, e.v2Id, e.id);
+            ne.type = e.type;
+            ne.portalDirection = e.portalDirection;
+            ne.textureId = e.textureId;
+            ne.targetEdgeId = e.targetEdgeId;
+            movedEdges.push(ne);
+          } else staticEdges.push(e);
         });
+
         let nextState = computeStateAfterEdges(
           State.vertices,
           staticEdges,
@@ -616,6 +714,75 @@ window.addEventListener("mouseup", (e) => {
   }
 });
 
+canvas.addEventListener("dblclick", (e) => {
+  if (e.button !== 0) return;
+
+  const screen = getMouseCoords(e);
+  const world = worldFromMouse(screen[0], screen[1]);
+
+  // Only allow quick-split if we are using the primary Drag/Select tool
+  if (State.currentTool === TOOLS.DRAG) {
+    let hitEdge = findEdgeAt(world);
+
+    if (hitEdge) {
+      let snapW = getMagneticSnapPosition(world, new Set(), SNAP);
+      let newVId = getOrCreateVertexInPool(State.vertices, snapW[0], snapW[1]);
+
+      // 1. Inherit all properties to the two new sub-edges
+      let e1 = new Edge(hitEdge.v1Id, newVId);
+      e1.type = hitEdge.type;
+      e1.portalDirection = hitEdge.portalDirection;
+      e1.textureId = hitEdge.textureId;
+      e1.targetEdgeId = hitEdge.targetEdgeId;
+
+      let e2 = new Edge(newVId, hitEdge.v2Id);
+      e2.type = hitEdge.type;
+      e2.portalDirection = hitEdge.portalDirection;
+      e2.textureId = hitEdge.textureId;
+      e2.targetEdgeId = hitEdge.targetEdgeId;
+
+      let nextE = State.edges.filter((e) => e.id !== hitEdge.id);
+      nextE.push(e1, e2);
+
+      let state = computeStateAfterEdges(State.vertices, nextE, []);
+
+      // 2. Safely clone the old state for the Undo buffer
+      let oldV = State.vertices.map((v) => {
+        let nv = new Vertex(v.x, v.y, v.id);
+        nv.zFloorOffset = v.zFloorOffset || 0;
+        nv.zCeilOffset = v.zCeilOffset || 0;
+        return nv;
+      });
+      let oldE = State.edges.map((e) => {
+        let ne = new Edge(e.v1Id, e.v2Id, e.id);
+        ne.type = e.type;
+        ne.portalDirection = e.portalDirection;
+        ne.textureId = e.textureId;
+        ne.targetEdgeId = e.targetEdgeId;
+        return ne;
+      });
+
+      State.History.execute(
+        new GeometryChangeCommand(
+          oldV,
+          oldE,
+          state.newV,
+          state.newE,
+          State.selectedVertices,
+          State.selectedVertices,
+        ),
+      );
+
+      // 3. Auto-select the newly created vertex so the user can immediately move it!
+      State.selectedFaceId.clear();
+      State.selectedEdgeId.clear();
+      State.selectedVertices.clear();
+      State.selectedVertices.add(newVId);
+      UI.updatePropertiesPanel();
+    }
+  }
+});
+
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const screen = getMouseCoords(e);
@@ -631,23 +798,205 @@ canvas.addEventListener("wheel", (e) => {
 window.addEventListener("orc_inspector_change", (e) => {
   const { id, values } = e.detail;
 
-  if (id === "room_inspector" && State.selectedFaceId) {
-    const face = State.faces.find((f) => f.id === State.selectedFaceId);
-    if (face) {
-      face.floorHeight = values.floorHeight;
-      face.ceilHeight = values.ceilHeight;
-      face.floorColor = values.floorColor;
-      face.ceilColor = values.ceilColor;
-      saveEditorStateToStorage();
+  if (id === "room_inspector" && State.selectedFaceId.size > 0) {
+    State.faces.forEach((f) => {
+      if (State.selectedFaceId.has(f.id)) {
+        f.floorHeight = values.floorHeight;
+        f.ceilHeight = values.ceilHeight;
+        f.floorColor = values.floorColor;
+        f.ceilColor = values.ceilColor;
+      }
+    });
+    saveEditorStateToStorage();
+  } else if (id === "wall_inspector" && State.selectedEdgeId.size > 0) {
+    State.edges.forEach((edge) => {
+      if (State.selectedEdgeId.has(edge.id)) {
+        edge.type = values.type;
+        edge.portalDirection = values.portalDirection;
+        edge.textureId = values.textureId;
+      }
+    });
+    saveEditorStateToStorage();
+  } else if (id === "vertex_inspector" && State.selectedVertices.size > 0) {
+    State.vertices.forEach((v) => {
+      if (State.selectedVertices.has(v.id)) {
+        v.zFloorOffset = values.zFloorOffset;
+        v.zCeilOffset = values.zCeilOffset;
+      }
+    });
+    saveEditorStateToStorage();
+  }
+});
+
+window.addEventListener("orc_inspector_action", (e) => {
+  const { id, action } = e.detail;
+  if (
+    id === "wall_inspector" &&
+    action === "action_disconnect" &&
+    State.selectedEdgeId.size > 0
+  ) {
+    let nextE = State.edges.map((edge) => {
+      let ne = new Edge(edge.v1Id, edge.v2Id, edge.id);
+      ne.type = edge.type;
+      ne.portalDirection = edge.portalDirection;
+      ne.textureId = edge.textureId;
+      ne.targetEdgeId = edge.targetEdgeId;
+      return ne;
+    });
+
+    State.selectedEdgeId.forEach((selectedId) => {
+      let sEdge = nextE.find((edge) => edge.id === selectedId);
+      if (sEdge && sEdge.targetEdgeId) {
+        nextE.forEach((edge) => {
+          if (edge.targetEdgeId === sEdge.id || edge.id === sEdge.targetEdgeId)
+            edge.targetEdgeId = null;
+        });
+        sEdge.targetEdgeId = null;
+      }
+    });
+
+    State.History.execute(
+      new GeometryChangeCommand(
+        State.vertices,
+        State.edges,
+        State.vertices,
+        nextE,
+        State.selectedVertices,
+        State.selectedVertices,
+      ),
+    );
+    UI.updatePropertiesPanel();
+  }
+});
+
+// ==========================================
+// MOBILE TOUCH ADAPTER
+// ==========================================
+let initialPinchDistance = null;
+let initialZoomState = null;
+
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault(); // Prevents mobile scrolling while drawing
+
+    if (e.touches.length === 1) {
+      // 1 Finger: Simulate Mouse Down
+      const touch = e.touches[0];
+      canvas.dispatchEvent(
+        new MouseEvent("mousedown", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          button: 0,
+          bubbles: true,
+        }),
+      );
+    } else if (e.touches.length === 2) {
+      // 2 Fingers: Cancel drawing/dragging, start Pan & Zoom
+      if (isMouseDown) {
+        window.dispatchEvent(
+          new MouseEvent("mouseup", { button: 0, bubbles: true }),
+        );
+      }
+
+      isPanning = true;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+
+      // Calculate distance and midpoint between the two fingers
+      initialPinchDistance = Math.hypot(
+        t2.clientX - t1.clientX,
+        t2.clientY - t1.clientY,
+      );
+      initialZoomState = State.zoom;
+      panLastScreen = [
+        (t1.clientX + t2.clientX) / 2,
+        (t1.clientY + t2.clientY) / 2,
+      ];
     }
-  } else if (id === "wall_inspector" && State.selectedEdgeId) {
-    const edge = State.edges.find((e) => e.id === State.selectedEdgeId);
-    if (edge) {
-      edge.type = values.type;
-      edge.portalDirection = values.portalDirection;
-      edge.textureId = values.textureId;
-      saveEditorStateToStorage();
+  },
+  { passive: false },
+);
+
+canvas.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+
+    if (e.touches.length === 1 && !isPanning) {
+      // 1 Finger: Simulate Mouse Move
+      const touch = e.touches[0];
+      canvas.dispatchEvent(
+        new MouseEvent("mousemove", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          button: 0,
+          bubbles: true,
+        }),
+      );
+    } else if (e.touches.length === 2) {
+      // 2 Fingers: Calculate Pan & Zoom natively
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const currentCenter = [
+        (t1.clientX + t2.clientX) / 2,
+        (t1.clientY + t2.clientY) / 2,
+      ];
+      const currentDistance = Math.hypot(
+        t2.clientX - t1.clientX,
+        t2.clientY - t1.clientY,
+      );
+
+      // Execute Pan (Dragging two fingers across screen)
+      State.offsetX += (currentCenter[0] - panLastScreen[0]) / State.zoom;
+      State.offsetY += (currentCenter[1] - panLastScreen[1]) / State.zoom;
+      panLastScreen = currentCenter;
+
+      // Execute Pinch-to-Zoom
+      if (initialPinchDistance > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const zoomCenterScreen = [
+          (currentCenter[0] - rect.left) * (canvas.width / rect.width),
+          (currentCenter[1] - rect.top) * (canvas.height / rect.height),
+        ];
+
+        const wCenterBefore = worldFromMouse(
+          zoomCenterScreen[0],
+          zoomCenterScreen[1],
+        );
+        const zoomFactor = currentDistance / initialPinchDistance;
+
+        State.zoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, initialZoomState * zoomFactor),
+        );
+
+        // Compensate offset to keep the zoom perfectly centered exactly between your two fingers
+        State.offsetX = zoomCenterScreen[0] / State.zoom - wCenterBefore[0];
+        State.offsetY = zoomCenterScreen[1] / State.zoom - wCenterBefore[1];
+      }
     }
+  },
+  { passive: false },
+);
+
+window.addEventListener("touchend", (e) => {
+  if (e.touches.length < 2) {
+    isPanning = false;
+    initialPinchDistance = null;
+  }
+
+  if (e.touches.length === 0) {
+    // 0 Fingers: Simulate Mouse Up to finalize drawing
+    const touch = e.changedTouches[0];
+    window.dispatchEvent(
+      new MouseEvent("mouseup", {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        bubbles: true,
+      }),
+    );
   }
 });
 
@@ -709,7 +1058,7 @@ function render() {
     ctx.fill();
 
     // Layer the bright blue outline ONLY if selected
-    if (State.selectedFaceId === face.id) {
+    if (State.selectedFaceId.has(face.id)) {
       ctx.fillStyle = "rgba(0, 150, 255, 0.2)";
       ctx.fill();
       ctx.strokeStyle = "rgba(0, 150, 255, 0.8)";
@@ -743,6 +1092,57 @@ function render() {
     }
   });
 
+  // --- DRAW PORTAL CONNECTIONS ---
+  ctx.lineWidth = 2 / State.zoom;
+  State.edges.forEach((edge) => {
+    // 1. Established Connections (Curved transparent cyan line)
+    if (edge.type === "portal" && edge.targetEdgeId) {
+      let target = State.edges.find((e) => e.id === edge.targetEdgeId);
+      // Prevent drawing the same line twice (A->B and B->A)
+      if (target && edge.id < target.id) {
+        let v1 = getV(State.vertices, edge.v1Id),
+          v2 = getV(State.vertices, edge.v2Id);
+        let tv1 = getV(State.vertices, target.v1Id),
+          tv2 = getV(State.vertices, target.v2Id);
+        if (v1 && v2 && tv1 && tv2) {
+          let m1X = (v1.x + v2.x) / 2,
+            m1Y = (v1.y + v2.y) / 2;
+          let m2X = (tv1.x + tv2.x) / 2,
+            m2Y = (tv1.y + tv2.y) / 2;
+
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(68, 255, 255, 0.25)";
+          ctx.setLineDash([4 / State.zoom, 8 / State.zoom]);
+          ctx.moveTo(m1X, m1Y);
+          // Curve slightly to differentiate from straight geometric walls
+          let cpX = (m1X + m2X) / 2 + (m2Y - m1Y) * 0.2;
+          let cpY = (m1Y + m2Y) / 2 - (m2X - m1X) * 0.2;
+          ctx.quadraticCurveTo(cpX, cpY, m2X, m2Y);
+          ctx.stroke();
+        }
+      }
+    }
+  });
+
+  // 2. Active Dragging Wire (Solid glowing cyan tracking mouse)
+  if (isMouseDown && draggingPortalId) {
+    let sEdge = State.edges.find((e) => e.id === draggingPortalId);
+    if (sEdge) {
+      let v1 = getV(State.vertices, sEdge.v1Id),
+        v2 = getV(State.vertices, sEdge.v2Id);
+      let m1X = (v1.x + v2.x) / 2,
+        m1Y = (v1.y + v2.y) / 2;
+
+      ctx.beginPath();
+      ctx.strokeStyle = "#44ffff";
+      ctx.setLineDash([6 / State.zoom, 6 / State.zoom]);
+      ctx.moveTo(m1X, m1Y);
+      ctx.lineTo(currentRawMouse[0], currentRawMouse[1]);
+      ctx.stroke();
+    }
+  }
+  ctx.setLineDash([]);
+
   // Draw Edges
   State.edges.forEach((edge) => {
     let v1 = getV(State.vertices, edge.v1Id),
@@ -763,26 +1163,27 @@ function render() {
       State.selectedVertices.has(edge.v2Id);
     ctx.lineWidth = standsSelected ? 3.5 / State.zoom : 2 / State.zoom;
 
-    if (isLoose) {
-      // LOOSE EDGE: Render as glowing dashed Magenta so you can spot topological gaps instantly!
-      ctx.strokeStyle = standsSelected ? "#ff4444" : "#ff00ff";
-      ctx.setLineDash([8 / State.zoom, 8 / State.zoom]);
+    // 1. BASE COLORING BY TYPE
+    if (edge.type === "portal") {
+      ctx.strokeStyle = standsSelected ? "#ff4444" : "#44ffff"; // Portals are Cyan
+      ctx.setLineDash([4 / State.zoom, 4 / State.zoom]);
+    } else if (edge.type === "door") {
+      ctx.strokeStyle = standsSelected ? "#ff4444" : "#ffaa00"; // Doors are Orange
+      ctx.setLineDash([]);
     } else {
-      // CONNECTED EDGE: Render based on its physical portal/door properties
-      ctx.strokeStyle = standsSelected ? "#ff4444" : "#ffffff"; // Solid default
-      if (edge.type === "portal") {
-        ctx.strokeStyle = "#44ffff"; // Portals are Cyan dashed lines
-        ctx.setLineDash([4 / State.zoom, 4 / State.zoom]);
-      } else if (edge.type === "door") {
-        ctx.strokeStyle = "#ffaa00"; // Doors are Orange solid lines
-        ctx.setLineDash([]);
+      // Solid Walls
+      if (isLoose) {
+        // Only show the magenta warning for SOLID loose walls, so it doesn't hide portals!
+        ctx.strokeStyle = standsSelected ? "#ff4444" : "#ff00ff";
+        ctx.setLineDash([8 / State.zoom, 8 / State.zoom]);
       } else {
+        ctx.strokeStyle = standsSelected ? "#ff4444" : "#ffffff";
         ctx.setLineDash([]);
       }
     }
 
     // Hover or Active Wall Selection Highlights
-    if (edge.id === hoveredEdgeId || edge.id === State.selectedEdgeId) {
+    if (edge.id === hoveredEdgeId || State.selectedEdgeId.has(edge.id)) {
       ctx.strokeStyle = "#ffd966";
       ctx.lineWidth = 4 / State.zoom;
     }
@@ -790,9 +1191,8 @@ function render() {
     ctx.stroke();
     ctx.setLineDash([]); // Reset dash for subsequent drawing operations
 
-    // NEW: Portal Direction Indicator (Normal Vector Arrow)
-    // NEW: Portal Direction Indicator (Normal Vector Arrow)
-    if (edge.type === "portal" && !isLoose) {
+    // 2. DRAW THE DIRECTIONAL ARROWS (Removed the !isLoose constraint)
+    if (edge.type === "portal") {
       let midX = (v1.x + v2.x) / 2;
       let midY = (v1.y + v2.y) / 2;
       let dx = v2.x - v1.x;
@@ -866,10 +1266,19 @@ function render() {
   }
 
   // Draw Vertices
+  // Draw Vertices
   State.vertices.forEach((v) => {
     ctx.beginPath();
     ctx.arc(v.x, v.y, 4 / State.zoom, 0, 2 * Math.PI);
-    ctx.fillStyle = State.selectedVertices.has(v.id) ? "#ff4444" : "#44ff88";
+
+    if (State.selectedVertices.has(v.id)) {
+      ctx.fillStyle = "#ff4444";
+    } else if (v.zFloorOffset !== 0 || v.zCeilOffset !== 0) {
+      ctx.fillStyle = "#ffaa00"; // Orange visual indicator for slanted vertices!
+    } else {
+      ctx.fillStyle = "#44ff88";
+    }
+
     ctx.fill();
     ctx.lineWidth = 1 / State.zoom;
     ctx.strokeStyle = "#ffffff";
@@ -881,7 +1290,7 @@ function render() {
   });
 
   // Tools visual feedback
-  let snapped = snapPoint(currentRawMouse, SNAP);
+  let snapped = getMagneticSnapPosition(currentRawMouse, new Set(), SNAP);
   if (isMouseDown && State.currentTool === TOOLS.LINE && currentAnchorId) {
     let vAnchor = getV(State.vertices, currentAnchorId);
     if (vAnchor) {
@@ -917,19 +1326,19 @@ function render() {
 
   // Tools visual feedback
 
-  if (isMouseDown && State.currentTool === TOOLS.LINE && currentAnchorId) {
-    let vAnchor = getV(State.vertices, currentAnchorId);
-    if (vAnchor) {
-      ctx.beginPath();
-      ctx.strokeStyle = "#ffd966";
-      ctx.setLineDash([5 / State.zoom, 5 / State.zoom]);
-      ctx.lineWidth = 2 / State.zoom;
-      ctx.moveTo(vAnchor.x, vAnchor.y);
-      ctx.lineTo(snapped[0], snapped[1]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
+  // if (isMouseDown && State.currentTool === TOOLS.LINE && currentAnchorId) {
+  //   let vAnchor = getV(State.vertices, currentAnchorId);
+  //   if (vAnchor) {
+  //     ctx.beginPath();
+  //     ctx.strokeStyle = "#ffd966";
+  //     ctx.setLineDash([5 / State.zoom, 5 / State.zoom]);
+  //     ctx.lineWidth = 2 / State.zoom;
+  //     ctx.moveTo(vAnchor.x, vAnchor.y);
+  //     ctx.lineTo(snapped[0], snapped[1]);
+  //     ctx.stroke();
+  //     ctx.setLineDash([]);
+  //   }
+  // }
 
   // NEW: N-Gon Live Wireframe Visualizer
   if (isMouseDown && State.currentTool === TOOLS.NGON && currentAnchorId) {

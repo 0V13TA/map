@@ -51,18 +51,32 @@ export class GeometryChangeCommand {
    * @param {Set<Vertex>} newSel
    */
   constructor(oldV, oldE, newV, newE, oldSel, newSel) {
-    this.oldV = oldV.map((v) => new Vertex(v.x, v.y, v.id));
+    this.oldV = oldV.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    });
     this.oldE = oldE.map((e) => {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
+      ne.targetEdgeId = e.targetEdgeId;
+      ne.portalDirection = e.portalDirection;
       return ne;
     });
-    this.newV = newV.map((v) => new Vertex(v.x, v.y, v.id));
+    this.newV = newV.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    });
     this.newE = newE.map((e) => {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
+      ne.targetEdgeId = e.targetEdgeId;
+      ne.portalDirection = e.portalDirection;
       return ne;
     });
     this.oldSel = [...oldSel];
@@ -70,11 +84,17 @@ export class GeometryChangeCommand {
   }
 
   execute() {
-    State.vertices = this.newV.map((v) => new Vertex(v.x, v.y, v.id));
+    State.vertices = this.newV.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    });
     State.edges = this.newE.map((e) => {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
+      ne.targetEdgeId = e.targetEdgeId;
       ne.portalDirection = e.portalDirection;
       return ne;
     });
@@ -82,12 +102,18 @@ export class GeometryChangeCommand {
   }
 
   undo() {
-    State.vertices = this.oldV.map((v) => new Vertex(v.x, v.y, v.id));
+    State.vertices = this.oldV.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    });
     State.edges = this.oldE.map((e) => {
       let ne = new Edge(e.v1Id, e.v2Id, e.id);
       ne.type = e.type;
       ne.textureId = e.textureId;
       ne.portalDirection = e.portalDirection;
+      ne.targetEdgeId = e.targetEdgeId;
       return ne;
     });
     State.selectedVertices = new Set(this.oldSel);

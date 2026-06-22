@@ -2,13 +2,10 @@
 // ENUMS & ACTIONS
 // =========================
 export const TOOLS = {
-  WALL: "wall",
-  ROOM: "room",
   LINE: "line",
   NGON: "ngon",
   ZOOM: "zoom",
   DRAG: "drag",
-  SPLIT: "split",
 };
 
 export const ACTIONS = {
@@ -21,7 +18,6 @@ export const ACTIONS = {
   SET_TOOL_NGON: "set_tool_ngon",
   SET_TOOL_ZOOM: "set_tool_zoom",
   SET_TOOL_DRAG: "set_tool_drag",
-  SET_TOOL_SPLIT: "set_tool_split",
 
   PAN_UP: "pan_up",
   PAN_DOWN: "pan_down",
@@ -40,7 +36,6 @@ export const DEFAULT_KEY_BINDINGS = {
   KeyR: ACTIONS.ROTATE_SELECTION,
 
   Digit1: ACTIONS.SET_TOOL_LINE,
-  Digit2: ACTIONS.SET_TOOL_SPLIT,
   Digit3: ACTIONS.SET_TOOL_NGON,
   Digit4: ACTIONS.SET_TOOL_ZOOM,
   Digit5: ACTIONS.SET_TOOL_DRAG,

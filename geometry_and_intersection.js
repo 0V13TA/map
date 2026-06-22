@@ -9,6 +9,50 @@ import {
 } from "./relational_data_architecture.js";
 import { State } from "./state_persistence.js";
 
+export const HIT_RADIUS =
+  typeof window !== "undefined" &&
+  window.matchMedia("(pointer: coarse)").matches
+    ? 28
+    : 8;
+
+/**
+ * @param {number} wPos
+ */
+export function findPortalArrowAt(wPos, r = HIT_RADIUS / State.zoom) {
+  for (let edge of State.edges) {
+    if (edge.type !== "portal") continue;
+
+    let v1 = getV(State.vertices, edge.v1Id);
+    let v2 = getV(State.vertices, edge.v2Id);
+    if (!v1 || !v2) continue;
+
+    let midX = (v1.x + v2.x) / 2,
+      midY = (v1.y + v2.y) / 2;
+    let dx = v2.x - v1.x,
+      dy = v2.y - v1.y;
+    let len = Math.hypot(dx, dy);
+
+    if (len > 0) {
+      let nx = -dy / len,
+        ny = dx / len;
+      let pDir = edge.portalDirection || "both";
+      let arrowLen = 12 / State.zoom;
+
+      if (pDir === "both" || pDir === "forward") {
+        let tipX = midX + nx * arrowLen,
+          tipY = midY + ny * arrowLen;
+        if (Math.hypot(wPos[0] - tipX, wPos[1] - tipY) < r) return edge;
+      }
+      if (pDir === "both" || pDir === "backward") {
+        let tipX = midX - nx * arrowLen,
+          tipY = midY - ny * arrowLen;
+        if (Math.hypot(wPos[0] - tipX, wPos[1] - tipY) < r) return edge;
+      }
+    }
+  }
+  return null;
+}
+
 export function worldFromMouse(x, y) {
   return [x / State.zoom - State.offsetX, y / State.zoom - State.offsetY];
 }
@@ -111,7 +155,12 @@ export function computeStateAfterEdges(
   currentEPool,
   newEdgesArray,
 ) {
-  let tempV = currentVPool.map((v) => new Vertex(v.x, v.y, v.id));
+  let tempV = currentVPool.map((v) => {
+    let nv = new Vertex(v.x, v.y, v.id);
+    nv.zFloorOffset = v.zFloorOffset || 0;
+    nv.zCeilOffset = v.zCeilOffset || 0;
+    return nv;
+  });
   let tempE = currentEPool.filter((e) => e.v1Id !== e.v2Id);
 
   newEdgesArray.forEach((ne) => {
@@ -144,15 +193,74 @@ function distanceToEdge(vertices, p, edge) {
   );
 }
 
-export function findVertexAt(wPos, r = 8 / State.zoom) {
+export function findVertexAt(wPos, r = HIT_RADIUS / State.zoom) {
   return (
     State.vertices.find((v) => Math.hypot(v.x - wPos[0], v.y - wPos[1]) < r) ||
     null
   );
 }
 
-export function findEdgeAt(wPos, r = 8 / State.zoom) {
+export function findEdgeAt(wPos, r = HIT_RADIUS / State.zoom) {
   return (
     State.edges.find((e) => distanceToEdge(State.vertices, wPos, e) < r) || null
   );
+}
+
+/**
+ *  @param {[number,number]} p
+ *  @param {Set<UUID>} ignoreVertexIds
+ *  @param {number} snapGridSize
+ */
+export function getMagneticSnapPosition(p, ignoreVertexIds, snapGridSize) {
+  let snapRadius = HIT_RADIUS / State.zoom;
+
+  // 1. Vertex-to-Vertex Snapping (Highest Priority)
+  for (let v of State.vertices) {
+    if (ignoreVertexIds.has(v.id)) continue;
+    if (Math.hypot(v.x - p[0], v.y - p[1]) < snapRadius) {
+      return [v.x, v.y]; // Snap exactly to this vertex
+    }
+  }
+
+  // 2. Vertex-to-Edge Snapping (Vector Projection)
+  let minDistance = snapRadius;
+  let closestPoint = null;
+
+  for (let edge of State.edges) {
+    // Don't snap to an edge that is currently being moved
+    if (ignoreVertexIds.has(edge.v1Id) || ignoreVertexIds.has(edge.v2Id))
+      continue;
+
+    let v1 = getV(State.vertices, edge.v1Id);
+    let v2 = getV(State.vertices, edge.v2Id);
+    if (!v1 || !v2) continue;
+
+    let l2 = Math.pow(v1.x - v2.x, 2) + Math.pow(v1.y - v2.y, 2);
+    if (l2 === 0) continue;
+
+    // Calculate projection scalar (t)
+    let t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((p[0] - v1.x) * (v2.x - v1.x) + (p[1] - v1.y) * (v2.y - v1.y)) / l2,
+      ),
+    );
+    let projX = v1.x + t * (v2.x - v1.x);
+    let projY = v1.y + t * (v2.y - v1.y);
+    let dist = Math.hypot(p[0] - projX, p[1] - projY);
+
+    if (dist < minDistance) {
+      minDistance = dist;
+      closestPoint = [projX, projY];
+    }
+  }
+
+  if (closestPoint) return closestPoint;
+
+  // 3. Fallback: Standard Grid Snapping
+  return [
+    Math.round(p[0] / snapGridSize) * snapGridSize,
+    Math.round(p[1] / snapGridSize) * snapGridSize,
+  ];
 }

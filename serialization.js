@@ -7,6 +7,55 @@ import { triangulatePolygonPerimeter } from "./triangulation.js";
 import { buildDCEL } from "./DCEL.js";
 
 export function exportMapData() {
+  // ==========================================
+  // GEOMETRY VALIDATION (PRE-FLIGHT CHECKS)
+  // ==========================================
+  let errors = [];
+
+  // Clear selections so we can highlight ONLY the broken geometry
+  State.selectedVertices.clear();
+  State.selectedEdgeId.clear();
+  State.selectedFaceId.clear();
+
+  // 1. Check for Zero-Length Walls & Unlinked Portals
+  State.edges.forEach((e) => {
+    let v1 = getV(State.vertices, e.v1Id);
+    let v2 = getV(State.vertices, e.v2Id);
+    if (v1 && v2) {
+      if (Math.hypot(v2.x - v1.x, v2.y - v1.y) < 0.1) {
+        errors.push(`Wall ${e.id.substring(0, 4)} has zero length.`);
+        // Highlight the broken vertex for the user
+        State.selectedVertices.add(v1.id);
+      }
+    }
+    if (e.type === "portal" && !e.targetEdgeId) {
+      errors.push(
+        `Portal ${e.id.substring(0, 4)} is missing a target connection.`,
+      );
+      // Highlight the broken portal for the user
+      State.selectedEdgeId.add(e.id);
+    }
+  });
+
+  // 2. Check for empty maps
+  if (State.faces.length === 0) {
+    errors.push("Map has no closed rooms (sectors).");
+  }
+
+  // 3. Abort export if validation failed
+  if (errors.length > 0) {
+    // Force the UI to refresh and show the red highlights on the broken parts
+    window.dispatchEvent(new Event("resize"));
+
+    alert(
+      "🚨 Map Validation Failed 🚨\n\n" +
+        errors.join("\n") +
+        "\n\n(The problematic walls/vertices have been highlighted in red on your canvas!)",
+    );
+    return;
+  }
+  // ==========================================
+
   const TEXTURE_SCALE = 64.0;
 
   const exportSectors = State.faces.map((f) => {
@@ -27,13 +76,13 @@ export function exportMapData() {
       flatFloorTriangles.push({
         positions: [
           v1.x,
-          f.floorHeight,
+          f.floorHeight + (v1.zFloorOffset || 0),
           v1.y,
           v2.x,
-          f.floorHeight,
+          f.floorHeight + (v2.zFloorOffset || 0),
           v2.y,
           v3.x,
-          f.floorHeight,
+          f.floorHeight + (v3.zFloorOffset || 0),
           v3.y,
         ],
         uvs: [
@@ -48,13 +97,13 @@ export function exportMapData() {
       flatCeilTriangles.push({
         positions: [
           v1.x,
-          f.ceilHeight,
+          f.ceilHeight + (v1.zCeilOffset || 0),
           v1.y,
           v3.x,
-          f.ceilHeight,
+          f.ceilHeight + (v3.zCeilOffset || 0),
           v3.y,
           v2.x,
-          f.ceilHeight,
+          f.ceilHeight + (v2.zCeilOffset || 0),
           v2.y,
         ],
         uvs: [
@@ -91,6 +140,8 @@ export function exportMapData() {
       v1Id: e.v1Id,
       v2Id: e.v2Id,
       type: e.type,
+      targetID: e.targetID,
+      targetEdgeId: e.targetEdgeId,
       portalDirection: e.portalDirection,
     })),
     sectors: exportSectors,
@@ -113,11 +164,24 @@ export function importMapData(jsonString) {
     if (!mapData.vertices || !mapData.edges)
       throw new Error("Invalid map format");
 
-    State.vertices = mapData.vertices.map((v) => new Vertex(v.x, v.y, v.id));
-    State.edges = mapData.edges.map((e) => new Edge(e.v1Id, e.v2Id, e.id));
+    State.vertices = mapData.vertices.map((v) => {
+      let nv = new Vertex(v.x, v.y, v.id);
+      nv.zFloorOffset = v.zFloorOffset || 0;
+      nv.zCeilOffset = v.zCeilOffset || 0;
+      return nv;
+    });
 
+    // NEW: Properly hydrate all edge properties on JSON load
+    State.edges = mapData.edges.map((e) => {
+      let edge = new Edge(e.v1Id, e.v2Id, e.id);
+      if (e.type) edge.type = e.type;
+      if (e.targetEdgeId) edge.targetEdgeId = e.targetEdgeId;
+      if (e.portalDirection) edge.portalDirection = e.portalDirection;
+      return edge;
+    });
     State.selectedVertices.clear();
-    State.selectedFaceId = null;
+    State.selectedFaceId.clear();
+    State.selectedEdgeId.clear();
     State.History.undoStack = [];
     State.History.redoStack = [];
 

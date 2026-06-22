@@ -18,10 +18,10 @@ export const State = {
 
   /** @type {Set<Vertex>} */
   selectedVertices: new Set(),
-  /** @type {import("./relational_data_architecture.js").UUID} */
-  selectedFaceId: null,
-  /** @type {import("./relational_data_architecture.js").UUID} */
-  selectedEdgeId: null,
+  /** @type {Set<import("./relational_data_architecture.js").UUID>} */
+  selectedFaceId: new Set(),
+  /** @type {Set<import("./relational_data_architecture.js").UUID>} */
+  selectedEdgeId: new Set(),
 
   /** @type {TOOLS} */
   currentTool: TOOLS.LINE,
@@ -55,6 +55,7 @@ export function saveEditorStateToStorage() {
         v2Id: e.v2Id,
         type: e.type,
         textureId: e.textureId,
+        targetEdgeId: e.targetEdgeId,
         portalDirection: e.portalDirection,
       })),
     },
@@ -101,12 +102,16 @@ export function loadEditorStateFromStorage() {
     if (data.currentTool) State.currentTool = data.currentTool;
 
     if (data.geometry) {
-      State.vertices = data.geometry.vertices.map(
-        (v) => new Vertex(v.x, v.y, v.id),
-      );
+      State.vertices = data.geometry.vertices.map((v) => {
+        let nv = new Vertex(v.x, v.y, v.id);
+        nv.zFloorOffset = v.zFloorOffset || 0;
+        nv.zCeilOffset = v.zCeilOffset || 0;
+        return nv;
+      });
       State.edges = data.geometry.edges.map((e) => {
         let edge = new Edge(e.v1Id, e.v2Id, e.id);
         if (e.type) edge.type = e.type;
+        if (e.targetEdgeId) edge.targetEdgeId = e.targetEdgeId;
         if (e.textureId !== undefined) edge.textureId = e.textureId;
         if (e.portalDirection) edge.portalDirection = e.portalDirection;
         return edge;

@@ -1,6 +1,18 @@
 // =========================
 // CORE RELATIONAL DATA ARCHITECTURE
 // =========================
+
+export function generateUUID() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0,
+      v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /**
  * @typedef {`${string}-${string}-${string}-${string}-${string}`} UUID
  */
@@ -12,11 +24,15 @@ export class Vertex {
    */
   constructor(x, y, id = null) {
     /** @type {UUID} */
-    this.id = id || crypto.randomUUID();
+    this.id = id || generateUUID();
     /** @type {number} */
     this.x = x;
     /** @type {number} */
     this.y = y;
+    /** @type {number} */
+    this.zFloorOffset = 0;
+    /** @type {number} */
+    this.zCeilOffset = 0;
   }
 }
 
@@ -28,7 +44,7 @@ export class Edge {
    */
   constructor(v1Id, v2Id, id = null) {
     /** @type {UUID} */
-    this.id = id || crypto.randomUUID();
+    this.id = id || generateUUID();
     /** @type {UUID} */
     this.v1Id = v1Id;
     /** @type {UUID} */
@@ -36,8 +52,10 @@ export class Edge {
 
     /** @type {"solid" | "portal" | "door"} */
     this.type = "solid";
-    /*** @type {"forward" | "backward" | "both"} */
+    /** @type {"forward" | "backward" | "both"} */
     this.portalDirection = "foward";
+    /** @type {UUID | null} */
+    this.targetEdgeId = null;
     /** @type {number} */
     this.textureId = 0;
   }

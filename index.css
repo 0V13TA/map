@@ -7,7 +7,7 @@
 
 body {
   background: #0d0f12;
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -28,6 +28,7 @@ canvas {
   cursor: crosshair;
   background: #0d0f12;
   z-index: 1;
+  touch-action: none;
 }
 
 /* Base Floating UI Panels */
@@ -143,7 +144,7 @@ button:hover {
   border-radius: 16px;
   width: 520px;
   max-width: 90%;
-  max-height: 85vh;
+  max-height: 85dvh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
