@@ -53,7 +53,7 @@ export class Edge {
     /** @type {"solid" | "portal" | "door"} */
     this.type = "solid";
     /** @type {"forward" | "backward" | "both"} */
-    this.portalDirection = "foward";
+    this.portalDirection = "forward";
     /** @type {UUID | null} */
     this.targetEdgeId = null;
     /** @type {number} */

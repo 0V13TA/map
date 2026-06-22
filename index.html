@@ -8,6 +8,7 @@
     />
     <title>Infinite Canvas - Real-time Line Drawing</title>
     <link rel="stylesheet" href="index.css" />
+    <script src="./jszip.min.js"></script>
     <script src="index.js" type="module" defer></script>
   </head>
   <body>
@@ -120,6 +121,51 @@
         title="Delete Selection (Del)"
       >
         🗑 Delete
+      </button>
+    </div>
+
+    <div
+      id="campaign-sidebar"
+      class="ui-panel"
+      style="
+        top: 80px;
+        left: 20px;
+        flex-direction: column;
+        width: 180px;
+        gap: 8px;
+      "
+    >
+      <div
+        style="
+          color: #fff;
+          font-size: 14px;
+          font-weight: 600;
+          margin-bottom: 4px;
+        "
+      >
+        Campaign Levels
+      </div>
+      <div
+        id="level-list"
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          overflow-y: auto;
+          max-height: 400px;
+        "
+      ></div>
+      <button
+        class="action-btn"
+        id="btn-new-level"
+        style="
+          justify-content: center;
+          margin-top: 8px;
+          background: rgba(68, 255, 136, 0.1);
+          color: #44ff88;
+        "
+      >
+        + New Level
       </button>
     </div>
 

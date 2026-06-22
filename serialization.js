@@ -1,76 +1,190 @@
 // =========================
 // SERIALIZATION PIPELINE
 // =========================
-import { State } from "./state_persistence.js";
+
+import {
+  State,
+  Campaign,
+  getRawStateSnapshot,
+  applyRawStateSnapshot,
+} from "./state_persistence.js";
 import { getV, Vertex, Edge } from "./relational_data_architecture.js";
 import { triangulatePolygonPerimeter } from "./triangulation.js";
 import { buildDCEL } from "./DCEL.js";
 
-export function exportMapData() {
+export async function exportMapData() {
   // ==========================================
-  // GEOMETRY VALIDATION (PRE-FLIGHT CHECKS)
+  // GEOMETRY VALIDATION (Active Level Only)
   // ==========================================
   let errors = [];
-
-  // Clear selections so we can highlight ONLY the broken geometry
-  State.selectedVertices.clear();
-  State.selectedEdgeId.clear();
-  State.selectedFaceId.clear();
-
-  // 1. Check for Zero-Length Walls & Unlinked Portals
   State.edges.forEach((e) => {
-    let v1 = getV(State.vertices, e.v1Id);
-    let v2 = getV(State.vertices, e.v2Id);
-    if (v1 && v2) {
-      if (Math.hypot(v2.x - v1.x, v2.y - v1.y) < 0.1) {
-        errors.push(`Wall ${e.id.substring(0, 4)} has zero length.`);
-        // Highlight the broken vertex for the user
-        State.selectedVertices.add(v1.id);
-      }
-    }
-    if (e.type === "portal" && !e.targetEdgeId) {
-      errors.push(
-        `Portal ${e.id.substring(0, 4)} is missing a target connection.`,
-      );
-      // Highlight the broken portal for the user
-      State.selectedEdgeId.add(e.id);
-    }
+    let v1 = getV(State.vertices, e.v1Id),
+      v2 = getV(State.vertices, e.v2Id);
+    if (v1 && v2 && Math.hypot(v2.x - v1.x, v2.y - v1.y) < 0.1)
+      errors.push(`Wall ${e.id.substring(0, 4)} has zero length.`);
+    if (e.type === "portal" && !e.targetEdgeId)
+      errors.push(`Portal ${e.id.substring(0, 4)} is missing a target.`);
   });
-
-  // 2. Check for empty maps
-  if (State.faces.length === 0) {
+  if (State.faces.length === 0)
     errors.push("Map has no closed rooms (sectors).");
-  }
-
-  // 3. Abort export if validation failed
   if (errors.length > 0) {
-    // Force the UI to refresh and show the red highlights on the broken parts
-    window.dispatchEvent(new Event("resize"));
-
     alert(
-      "🚨 Map Validation Failed 🚨\n\n" +
-        errors.join("\n") +
-        "\n\n(The problematic walls/vertices have been highlighted in red on your canvas!)",
+      "🚨 Map Validation Failed on Active Level 🚨\n\n" + errors.join("\n"),
     );
     return;
   }
+
   // ==========================================
+  // JSZIP CAMPAIGN COMPILER
+  // ==========================================
+  const zip = new window.JSZip();
+  const manifest = {
+    campaign_name: Campaign.name,
+    starting_level: `levels/${Campaign.levels[0].id}.json`,
+    levels: {},
+  };
 
+  // 1. Sleep the active state so we don't lose unsaved changes
+  Campaign.levels[Campaign.activeLevelIndex].rawData = getRawStateSnapshot();
+  const originalIndex = Campaign.activeLevelIndex;
+
+  // 2. Compile Loop
+  for (let i = 0; i < Campaign.levels.length; i++) {
+    let level = Campaign.levels[i];
+
+    // Swap State context
+    applyRawStateSnapshot(level.rawData);
+
+    // Compile geometry
+    let compiledLevel = compileCurrentStateToJSON(level.id);
+    let filename = `${level.id}.json`;
+
+    // Write file to ZIP
+    zip.folder("levels").file(filename, JSON.stringify(compiledLevel, null, 2));
+
+    // Update Master Manifest Graph
+    let nextLevelId =
+      i + 1 < Campaign.levels.length
+        ? `${Campaign.levels[i + 1].id}.json`
+        : null;
+    manifest.levels[`levels/${filename}`] = {
+      next_level: nextLevelId ? `levels/${nextLevelId}` : null,
+    };
+  }
+
+  // 3. Restore the user's active level safely
+  applyRawStateSnapshot(Campaign.levels[originalIndex].rawData);
+
+  // 4. Finalize Manifest and Download ZIP
+  zip.file("campaign.json", JSON.stringify(manifest, null, 2));
+
+  const blob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(blob);
+  const downloadAnchor = document.createElement("a");
+  downloadAnchor.href = url;
+  downloadAnchor.download = "orc_campaign.zip";
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function compileCurrentStateToJSON(levelId) {
   const TEXTURE_SCALE = 64.0;
-
   const exportSectors = State.faces.map((f) => {
     let perimeterVertices = [];
+    let boundaryVertexIds = [];
+    let portalNeighbors = [];
+    let bounds = {
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+    };
+    let flatWallTriangles = [];
+
     let currEdge = f.outerComponent;
-    do {
-      let v = getV(State.vertices, currEdge.originId);
-      if (v) perimeterVertices.push(v);
-      currEdge = currEdge.next;
-    } while (currEdge && currEdge !== f.outerComponent);
+    if (currEdge) {
+      do {
+        let v1 = getV(State.vertices, currEdge.originId);
+        let v2 = getV(State.vertices, currEdge.next.originId);
+        let edgeData = currEdge.edge;
+
+        if (v1) {
+          perimeterVertices.push(v1);
+          boundaryVertexIds.push(v1.id);
+          bounds.minX = Math.min(bounds.minX, v1.x);
+          bounds.maxX = Math.max(bounds.maxX, v1.x);
+          bounds.minY = Math.min(bounds.minY, v1.y);
+          bounds.maxY = Math.max(bounds.maxY, v1.y);
+        }
+
+        if (currEdge.twin && currEdge.twin.face) {
+          portalNeighbors.push({
+            neighborSectorId: currEdge.twin.face.id,
+            edgeId: edgeData.id,
+            edgeType: edgeData.type,
+            connectionType: "euclidean",
+          });
+        }
+
+        if (edgeData.type === "portal" && edgeData.targetEdgeId) {
+          let targetHE = State.halfEdges.find(
+            (he) => he.edge.id === edgeData.targetEdgeId,
+          );
+          if (targetHE && targetHE.face) {
+            portalNeighbors.push({
+              neighborSectorId: targetHE.face.id,
+              portalEdgeId: edgeData.id,
+              edgeType: "portal",
+              connectionType: "teleport",
+            });
+          }
+        }
+
+        if (v1 && v2 && edgeData.type === "solid") {
+          let hFloor = f.floorHeight,
+            hCeil = f.ceilHeight;
+          let zF1 = hFloor + (v1.zFloorOffset || 0),
+            zC1 = hCeil + (v1.zCeilOffset || 0);
+          let zF2 = hFloor + (v2.zFloorOffset || 0),
+            zC2 = hCeil + (v2.zCeilOffset || 0);
+          let wallLen = Math.hypot(v2.x - v1.x, v2.y - v1.y);
+          let texU = wallLen / TEXTURE_SCALE,
+            texV = (hCeil - hFloor) / TEXTURE_SCALE;
+
+          flatWallTriangles.push({
+            positions: [
+              v2.x,
+              zF2,
+              v2.y,
+              v1.x,
+              zF1,
+              v1.y,
+              v1.x,
+              zC1,
+              v1.y,
+              v2.x,
+              zF2,
+              v2.y,
+              v1.x,
+              zC1,
+              v1.y,
+              v2.x,
+              zC2,
+              v2.y,
+            ],
+            uvs: [texU, 0, 0, 0, 0, texV, texU, 0, 0, texV, texU, texV],
+            textureId: edgeData.textureId,
+          });
+        }
+        currEdge = currEdge.next;
+      } while (currEdge && currEdge !== f.outerComponent);
+    }
 
     const indices2D = triangulatePolygonPerimeter(perimeterVertices);
-
-    let flatFloorTriangles = [];
-    let flatCeilTriangles = [];
+    let flatFloorTriangles = [],
+      flatCeilTriangles = [];
 
     indices2D.forEach(([v1, v2, v3]) => {
       flatFloorTriangles.push({
@@ -119,28 +233,30 @@ export function exportMapData() {
 
     return {
       id: f.id,
+      bounds: bounds,
+      boundaryVertexIds: boundaryVertexIds,
+      portalNeighbors: portalNeighbors,
       floorHeight: f.floorHeight,
       ceilHeight: f.ceilHeight,
       floorColor: f.floorColor,
       ceilColor: f.ceilColor,
-      anchorEdgeId: f.outerComponent?.edge?.id,
-      anchorOriginId: f.outerComponent?.originId,
       mesh3D: {
         floorTriangles: flatFloorTriangles,
         ceilTriangles: flatCeilTriangles,
+        wallTriangles: flatWallTriangles,
       },
     };
   });
 
-  const mapData = {
+  return {
     version: "1.0",
+    levelId: levelId,
     vertices: State.vertices.map((v) => ({ id: v.id, x: v.x, y: v.y })),
     edges: State.edges.map((e) => ({
       id: e.id,
       v1Id: e.v1Id,
       v2Id: e.v2Id,
       type: e.type,
-      targetID: e.targetID,
       targetEdgeId: e.targetEdgeId,
       portalDirection: e.portalDirection,
     })),
@@ -153,16 +269,6 @@ export function exportMapData() {
     })),
     sectors: exportSectors,
   };
-
-  const dataStr =
-    "data:text/json;charset=utf-8," +
-    encodeURIComponent(JSON.stringify(mapData, null, 2));
-  const downloadAnchor = document.createElement("a");
-  downloadAnchor.setAttribute("href", dataStr);
-  downloadAnchor.setAttribute("download", "orc_map_3d_ready.json");
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
 }
 
 export function importMapData(jsonString) {

@@ -1,0 +1,12 @@
+{
+  "campaign_name": "ORC_Campaign",
+  "starting_level": "levels/level_01.json",
+  "levels": {
+    "levels/level_01.json": {
+      "next_level": "levels/level_02.json"
+    },
+    "levels/level_02.json": {
+      "next_level": null
+    }
+  }
+}

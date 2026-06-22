@@ -398,3 +398,15 @@ button:hover {
     width: 100%;
   }
 }
+
+/* Sidebar Level Buttons */
+.level-btn {
+  justify-content: flex-start;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid transparent;
+}
+.level-btn.active {
+  background: rgba(68, 255, 136, 0.1);
+  border-color: rgba(68, 255, 136, 0.3);
+  color: #44ff88;
+}

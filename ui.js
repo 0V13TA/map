@@ -1,5 +1,12 @@
 import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS } from "./enums_actions.js";
-import { State, saveEditorStateToStorage } from "./state_persistence.js";
+import {
+  State,
+  Campaign,
+  switchLevel,
+  deleteLevel,
+  createNewLevel,
+  saveEditorStateToStorage,
+} from "./state_persistence.js";
 import { exportMapData, importMapData } from "./serialization.js";
 
 // ============================================================================
@@ -440,6 +447,17 @@ export const UI = {
       true,
     );
 
+    document
+      .getElementById("btn-new-level")
+      .addEventListener("click", () => createNewLevel());
+
+    window.addEventListener("orc_level_switched", () => {
+      this.renderCampaignSidebar();
+      this.updatePropertiesPanel();
+      this.updateToolUI();
+    });
+
+    this.renderCampaignSidebar();
     this.updateToolUI();
   },
 
@@ -451,6 +469,47 @@ export const UI = {
   closeModal() {
     this.settingsModal.classList.add("hidden");
     this.activeListeningRow = null;
+  },
+
+  renderCampaignSidebar() {
+    const list = document.getElementById("level-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    Campaign.levels.forEach((level, index) => {
+      // Create a flex container for the row
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "4px";
+      row.style.width = "100%";
+
+      // The main Level Selection button
+      const btn = document.createElement("button");
+      btn.className =
+        "action-btn level-btn" +
+        (index === Campaign.activeLevelIndex ? " active" : "");
+      btn.textContent = level.name;
+      btn.style.flexGrow = "1";
+      btn.addEventListener("click", () => switchLevel(index));
+
+      // The Delete button
+      const delBtn = document.createElement("button");
+      delBtn.className = "action-btn";
+      delBtn.innerHTML = "🗑️";
+      delBtn.title = "Delete Level";
+      delBtn.style.padding = "4px 8px";
+      delBtn.style.background = "rgba(255, 68, 68, 0.1)";
+      delBtn.style.color = "#ff4444";
+
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); // Prevents the click from accidentally triggering the switchLevel button underneath!
+        deleteLevel(index);
+      });
+
+      row.appendChild(btn);
+      row.appendChild(delBtn);
+      list.appendChild(row);
+    });
   },
 
   updatePropertiesPanel() {
