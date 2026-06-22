@@ -1,9 +1,28 @@
-import { TOOLS, ACTIONS, DEFAULT_KEY_BINDINGS, type Tool, type Action } from "../core/enums";
 import {
-  State, Campaign, switchLevel, deleteLevel, createNewLevel, saveEditorStateToStorage,
+  TOOLS,
+  ACTIONS,
+  DEFAULT_KEY_BINDINGS,
+  type Tool,
+  type Action,
+} from "../core/enums";
+import {
+  State,
+  Campaign,
+  switchLevel,
+  deleteLevel,
+  createNewLevel,
+  saveEditorStateToStorage,
 } from "../state/state";
-import { exportMapData, importMapData } from "../io/serialization";
-import { ORC_Inspector, type InspectorChangeDetail, type InspectorActionDetail } from "./inspector";
+import {
+  exportMapData,
+  importMapData,
+  importWorkspace,
+} from "../io/serialization";
+import {
+  ORC_Inspector,
+  type InspectorChangeDetail,
+  type InspectorActionDetail,
+} from "./inspector";
 
 export const UI = {
   toolButtons: null as unknown as NodeListOf<HTMLButtonElement>,
@@ -20,6 +39,8 @@ export const UI = {
   propertiesContent: null as unknown as HTMLElement,
   toggleTrianglesBtn: null as unknown as HTMLButtonElement,
   activeListeningRow: null as HTMLElement | null,
+  importBtn: null as unknown as HTMLButtonElement,
+  fileInput: null as unknown as HTMLInputElement,
 
   roomInspector: null as unknown as ORC_Inspector,
   wallInspector: null as unknown as ORC_Inspector,
@@ -27,43 +48,133 @@ export const UI = {
   entityInspector: null as unknown as ORC_Inspector,
 
   init(): void {
-    this.toolButtons = document.querySelectorAll<HTMLButtonElement>(".tool-btn");
+    this.toolButtons =
+      document.querySelectorAll<HTMLButtonElement>(".tool-btn");
     this.undoBtn = document.getElementById("btn-undo") as HTMLButtonElement;
     this.redoBtn = document.getElementById("btn-redo") as HTMLButtonElement;
     this.rotateBtn = document.getElementById("btn-rotate") as HTMLButtonElement;
     this.deleteBtn = document.getElementById("btn-delete") as HTMLButtonElement;
-    this.settingsBtn = document.getElementById("btn-settings") as HTMLButtonElement;
-    this.settingsModal = document.getElementById("settings-modal") as HTMLElement;
-    this.closeSettingsBtn = document.getElementById("close-settings") as HTMLButtonElement;
-    this.bindingsContainer = document.getElementById("bindings-container") as HTMLElement;
-    this.resetBindingsBtn = document.getElementById("btn-reset-bindings") as HTMLButtonElement;
-    this.propertiesPanel = document.getElementById("dynamic-properties-panel") as HTMLElement;
-    this.propertiesContent = document.getElementById("panel-content") as HTMLElement;
-    this.toggleTrianglesBtn = document.getElementById("btn-toggle-triangles") as HTMLButtonElement;
+    this.importBtn = document.getElementById(
+      "btn-import-workspace",
+    ) as HTMLButtonElement;
+    this.fileInput = document.getElementById(
+      "file-import-input",
+    ) as HTMLInputElement;
+    this.settingsBtn = document.getElementById(
+      "btn-settings",
+    ) as HTMLButtonElement;
+    this.settingsModal = document.getElementById(
+      "settings-modal",
+    ) as HTMLElement;
+    this.closeSettingsBtn = document.getElementById(
+      "close-settings",
+    ) as HTMLButtonElement;
+    this.bindingsContainer = document.getElementById(
+      "bindings-container",
+    ) as HTMLElement;
+    this.resetBindingsBtn = document.getElementById(
+      "btn-reset-bindings",
+    ) as HTMLButtonElement;
+    this.propertiesPanel = document.getElementById(
+      "dynamic-properties-panel",
+    ) as HTMLElement;
+    this.propertiesContent = document.getElementById(
+      "panel-content",
+    ) as HTMLElement;
+    this.toggleTrianglesBtn = document.getElementById(
+      "btn-toggle-triangles",
+    ) as HTMLButtonElement;
 
-    this.roomInspector = new ORC_Inspector(this.propertiesContent, { id: "room_inspector", title: "Room Properties" }, [
-      { label: "Floor Height", key: "floorHeight", type: "number", value: 0 },
-      { label: "Ceil Height", key: "ceilHeight", type: "number", value: 64 },
-      { label: "Floor Color", key: "floorColor", type: "color", value: "#555555" },
-      { label: "Ceil Color", key: "ceilColor", type: "color", value: "#888888" },
-    ]);
+    this.roomInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "room_inspector", title: "Room Properties" },
+      [
+        { label: "Floor Height", key: "floorHeight", type: "number", value: 0 },
+        { label: "Ceil Height", key: "ceilHeight", type: "number", value: 64 },
+        {
+          label: "Floor Color",
+          key: "floorColor",
+          type: "color",
+          value: "#555555",
+        },
+        {
+          label: "Ceil Color",
+          key: "ceilColor",
+          type: "color",
+          value: "#888888",
+        },
+      ],
+    );
 
-    this.wallInspector = new ORC_Inspector(this.propertiesContent, { id: "wall_inspector", title: "Wall Properties" }, [
-      { label: "Wall Type", key: "type", type: "select", options: ["solid", "portal", "door"], value: "solid" },
-      { label: "Portal Dir", key: "portalDirection", type: "select", options: ["both", "forward", "backward"], value: "both" },
-      { label: "Texture ID", key: "textureId", type: "number", value: 0 },
-      { label: "Disconnect Portal", key: "action_disconnect", type: "button" },
-    ]);
+    this.wallInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "wall_inspector", title: "Wall Properties" },
+      [
+        {
+          label: "Wall Type",
+          key: "type",
+          type: "select",
+          options: ["solid", "portal", "door"],
+          value: "solid",
+        },
+        {
+          label: "Portal Dir",
+          key: "portalDirection",
+          type: "select",
+          options: ["both", "forward", "backward"],
+          value: "both",
+        },
+        { label: "Texture ID", key: "textureId", type: "number", value: 0 },
+        {
+          label: "Disconnect Portal",
+          key: "action_disconnect",
+          type: "button",
+        },
+      ],
+    );
 
-    this.vertexInspector = new ORC_Inspector(this.propertiesContent, { id: "vertex_inspector", title: "Vertex Slopes (Offset)" }, [
-      { label: "Floor Z Offset", key: "zFloorOffset", type: "number", value: 0 },
-      { label: "Ceil Z Offset", key: "zCeilOffset", type: "number", value: 0 },
-    ]);
+    this.vertexInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "vertex_inspector", title: "Vertex Slopes (Offset)" },
+      [
+        {
+          label: "Floor Z Offset",
+          key: "zFloorOffset",
+          type: "number",
+          value: 0,
+        },
+        {
+          label: "Ceil Z Offset",
+          key: "zCeilOffset",
+          type: "number",
+          value: 0,
+        },
+      ],
+    );
 
-    this.entityInspector = new ORC_Inspector(this.propertiesContent, { id: "entity_inspector", title: "Entity Properties" }, [
-      { label: "Type", key: "type", type: "select", options: ["PlayerSpawn", "Enemy", "Light", "Prop"], value: "PlayerSpawn" },
-      { label: "Spawn Angle", key: "angle", type: "number", value: 0, step: 15, wrap: true, min: 0, max: 360 },
-    ]);
+    this.entityInspector = new ORC_Inspector(
+      this.propertiesContent,
+      { id: "entity_inspector", title: "Entity Properties" },
+      [
+        {
+          label: "Type",
+          key: "type",
+          type: "select",
+          options: ["PlayerSpawn", "Enemy", "Light", "Prop"],
+          value: "PlayerSpawn",
+        },
+        {
+          label: "Spawn Angle",
+          key: "angle",
+          type: "number",
+          value: 0,
+          step: 15,
+          wrap: true,
+          min: 0,
+          max: 360,
+        },
+      ],
+    );
 
     this.toolButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -85,16 +196,38 @@ export const UI = {
       });
     });
 
-    this.undoBtn.addEventListener("click", () => { State.History?.undo(); this.updatePropertiesPanel(); });
-    this.redoBtn.addEventListener("click", () => { State.History?.redo(); this.updatePropertiesPanel(); });
+    this.undoBtn.addEventListener("click", () => {
+      State.History?.undo();
+      this.updatePropertiesPanel();
+    });
+    this.redoBtn.addEventListener("click", () => {
+      State.History?.redo();
+      this.updatePropertiesPanel();
+    });
 
     this.deleteBtn.addEventListener("click", () => {
       const cvs = document.querySelector("canvas");
-      cvs?.dispatchEvent(new KeyboardEvent("keydown", { code: "Delete", bubbles: true }));
+      cvs?.dispatchEvent(
+        new KeyboardEvent("keydown", { code: "Delete", bubbles: true }),
+      );
     });
     this.rotateBtn.addEventListener("click", () => {
       const cvs = document.querySelector("canvas");
-      cvs?.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyR", bubbles: true }));
+      cvs?.dispatchEvent(
+        new KeyboardEvent("keydown", { code: "KeyR", bubbles: true }),
+      );
+    });
+
+    // Clicking the nice UI button clicks the ugly hidden HTML input
+    this.importBtn.addEventListener("click", () => this.fileInput.click());
+
+    // When a file is selected, pass it to the importer
+    this.fileInput.addEventListener("change", (e) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files && target.files.length > 0) {
+        importWorkspace(target.files[0]!);
+        target.value = "";
+      }
     });
 
     this.toggleTrianglesBtn.addEventListener("click", () => {
@@ -102,7 +235,9 @@ export const UI = {
       this.toggleTrianglesBtn.textContent = State.showTriangulationWireframes
         ? "📐 Triangles: On"
         : "📐 Triangles: Off";
-      this.toggleTrianglesBtn.style.color = State.showTriangulationWireframes ? "#ffaa00" : "";
+      this.toggleTrianglesBtn.style.color = State.showTriangulationWireframes
+        ? "#ffaa00"
+        : "";
     });
 
     this.settingsBtn.addEventListener("click", () => this.openModal());
@@ -116,9 +251,15 @@ export const UI = {
       this.populateBindingsUI();
     });
 
-    document.getElementById("btn-export")!.addEventListener("click", () => void exportMapData());
-    const fileImport = document.getElementById("file-import") as HTMLInputElement;
-    document.getElementById("btn-import")!.addEventListener("click", () => fileImport.click());
+    document
+      .getElementById("btn-export")!
+      .addEventListener("click", () => void exportMapData());
+    const fileImport = document.getElementById(
+      "file-import",
+    ) as HTMLInputElement;
+    document
+      .getElementById("btn-import")!
+      .addEventListener("click", () => fileImport.click());
     fileImport.addEventListener("change", (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -131,18 +272,24 @@ export const UI = {
       (e.target as HTMLInputElement).value = "";
     });
 
-    window.addEventListener("keydown", (e) => {
-      if (this.activeListeningRow) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        this.handleRemapCapture(e);
-        return;
-      }
-      this.updateToolUI();
-      this.updatePropertiesPanel();
-    }, true);
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        if (this.activeListeningRow) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.handleRemapCapture(e);
+          return;
+        }
+        this.updateToolUI();
+        this.updatePropertiesPanel();
+      },
+      true,
+    );
 
-    document.getElementById("btn-new-level")!.addEventListener("click", () => createNewLevel());
+    document
+      .getElementById("btn-new-level")!
+      .addEventListener("click", () => createNewLevel());
 
     window.addEventListener("orc_level_switched", () => {
       this.renderCampaignSidebar();
@@ -150,8 +297,12 @@ export const UI = {
       this.updateToolUI();
     });
 
-    window.addEventListener("orc_inspector_change", (e) => this.handleInspectorChange(e as CustomEvent<InspectorChangeDetail>));
-    window.addEventListener("orc_inspector_action", (e) => this.handleInspectorAction(e as CustomEvent<InspectorActionDetail>));
+    window.addEventListener("orc_inspector_change", (e) =>
+      this.handleInspectorChange(e as CustomEvent<InspectorChangeDetail>),
+    );
+    window.addEventListener("orc_inspector_action", (e) =>
+      this.handleInspectorAction(e as CustomEvent<InspectorActionDetail>),
+    );
 
     this.renderCampaignSidebar();
     this.updateToolUI();
@@ -182,7 +333,9 @@ export const UI = {
       row.style.width = "100%";
 
       const btn = document.createElement("button");
-      btn.className = "action-btn level-btn" + (index === Campaign.activeLevelIndex ? " active" : "");
+      btn.className =
+        "action-btn level-btn" +
+        (index === Campaign.activeLevelIndex ? " active" : "");
       btn.textContent = level.name;
       btn.style.flexGrow = "1";
       btn.addEventListener("click", () => switchLevel(index));
@@ -194,7 +347,10 @@ export const UI = {
       delBtn.style.padding = "4px 8px";
       delBtn.style.background = "rgba(255, 68, 68, 0.1)";
       delBtn.style.color = "#ff4444";
-      delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteLevel(index); });
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteLevel(index);
+      });
 
       row.appendChild(btn);
       row.appendChild(delBtn);
@@ -214,9 +370,13 @@ export const UI = {
       const selectedFace = State.faces.find((f) => f.id === firstId);
       if (selectedFace) {
         this.propertiesPanel.classList.remove("hidden");
-        const title = this.roomInspector.container.querySelector(".panel-title");
-        if (title) title.textContent =
-          State.selectedFaceId.size > 1 ? `Rooms (${State.selectedFaceId.size})` : "Room Properties";
+        const title =
+          this.roomInspector.container.querySelector(".panel-title");
+        if (title)
+          title.textContent =
+            State.selectedFaceId.size > 1
+              ? `Rooms (${State.selectedFaceId.size})`
+              : "Room Properties";
         this.roomInspector.setValues({
           floorHeight: selectedFace.floorHeight,
           ceilHeight: selectedFace.ceilHeight,
@@ -230,9 +390,13 @@ export const UI = {
       const selectedEdge = State.edges.find((e) => e.id === firstId);
       if (selectedEdge) {
         this.propertiesPanel.classList.remove("hidden");
-        const title = this.wallInspector.container.querySelector(".panel-title");
-        if (title) title.textContent =
-          State.selectedEdgeId.size > 1 ? `Walls (${State.selectedEdgeId.size})` : "Wall Properties";
+        const title =
+          this.wallInspector.container.querySelector(".panel-title");
+        if (title)
+          title.textContent =
+            State.selectedEdgeId.size > 1
+              ? `Walls (${State.selectedEdgeId.size})`
+              : "Wall Properties";
         this.wallInspector.setValues({
           type: selectedEdge.type,
           portalDirection: selectedEdge.portalDirection || "both",
@@ -250,9 +414,13 @@ export const UI = {
       const selectedV = State.vertices.find((v) => v.id === firstId);
       if (selectedV) {
         this.propertiesPanel.classList.remove("hidden");
-        const title = this.vertexInspector.container.querySelector(".panel-title");
-        if (title) title.textContent =
-          State.selectedVertices.size > 1 ? `Vertices (${State.selectedVertices.size})` : "Vertex Slopes";
+        const title =
+          this.vertexInspector.container.querySelector(".panel-title");
+        if (title)
+          title.textContent =
+            State.selectedVertices.size > 1
+              ? `Vertices (${State.selectedVertices.size})`
+              : "Vertex Slopes";
         this.vertexInspector.setValues({
           zFloorOffset: selectedV.zFloorOffset || 0,
           zCeilOffset: selectedV.zCeilOffset || 0,
@@ -264,9 +432,13 @@ export const UI = {
       const selectedEnt = State.entities.find((e) => e.id === firstId);
       if (selectedEnt) {
         this.propertiesPanel.classList.remove("hidden");
-        const title = this.entityInspector.container.querySelector(".panel-title");
-        if (title) title.textContent =
-          State.selectedEntityIds.size > 1 ? `Entities (${State.selectedEntityIds.size})` : "Entity Properties";
+        const title =
+          this.entityInspector.container.querySelector(".panel-title");
+        if (title)
+          title.textContent =
+            State.selectedEntityIds.size > 1
+              ? `Entities (${State.selectedEntityIds.size})`
+              : "Entity Properties";
         this.entityInspector.setValues({
           type: selectedEnt.type,
           angle: selectedEnt.angle || 0,
@@ -288,8 +460,11 @@ export const UI = {
 
       const keyCap = document.createElement("div");
       keyCap.className = "key-cap";
-      const assignedKeys = Object.keys(State.keyBindings).filter((k) => State.keyBindings[k] === action);
-      keyCap.textContent = assignedKeys.length > 0 ? assignedKeys.join(" / ") : "[ None ]";
+      const assignedKeys = Object.keys(State.keyBindings).filter(
+        (k) => State.keyBindings[k] === action,
+      );
+      keyCap.textContent =
+        assignedKeys.length > 0 ? assignedKeys.join(" / ") : "[ None ]";
       keyCap.addEventListener("click", () => {
         this.activeListeningRow?.classList.remove("listening");
         this.activeListeningRow = keyCap;
@@ -305,9 +480,22 @@ export const UI = {
 
   handleRemapCapture(e: KeyboardEvent): void {
     if (!this.activeListeningRow) return;
-    const actionTarget = this.activeListeningRow.getAttribute("data-action") as Action | null;
+    const actionTarget = this.activeListeningRow.getAttribute(
+      "data-action",
+    ) as Action | null;
     if (!actionTarget) return;
-    if (["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight", "MetaLeft"].includes(e.code)) return;
+    if (
+      [
+        "ControlLeft",
+        "ControlRight",
+        "ShiftLeft",
+        "ShiftRight",
+        "AltLeft",
+        "AltRight",
+        "MetaLeft",
+      ].includes(e.code)
+    )
+      return;
 
     let prefix = "";
     if (e.ctrlKey || e.metaKey) prefix += "Ctrl+";
@@ -325,7 +513,10 @@ export const UI = {
   updateToolUI(): void {
     this.toolButtons?.forEach((btn) => {
       const btnTool = btn.getAttribute("data-tool");
-      if (btnTool && TOOLS[btnTool.toUpperCase() as keyof typeof TOOLS] === State.currentTool) {
+      if (
+        btnTool &&
+        TOOLS[btnTool.toUpperCase() as keyof typeof TOOLS] === State.currentTool
+      ) {
         btn.classList.add("active");
       } else {
         btn.classList.remove("active");

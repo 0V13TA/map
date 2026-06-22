@@ -1,11 +1,22 @@
 import JSZip from "jszip";
-import { State, Campaign, getRawStateSnapshot, applyRawStateSnapshot } from "../state/state";
+import {
+  State,
+  Campaign,
+  getRawStateSnapshot,
+  applyRawStateSnapshot,
+  saveEditorStateToStorage,
+} from "../state/state";
 import { Edge, Vertex, getV } from "../core/model";
 import { triangulatePolygonPerimeter } from "../core/triangulation";
 import { buildDCEL } from "../core/dcel";
 import type { UUID } from "../core/types";
 
-interface Bounds { minX: number; maxX: number; minY: number; maxY: number }
+interface Bounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
 interface PortalNeighbor {
   neighborSectorId: UUID;
   edgeId?: UUID;
@@ -13,7 +24,11 @@ interface PortalNeighbor {
   edgeType: string;
   connectionType: "euclidean" | "teleport";
 }
-interface FlatTri { positions: number[]; uvs: number[]; textureId?: number }
+interface FlatTri {
+  positions: number[];
+  uvs: number[];
+  textureId?: number;
+}
 
 export async function exportMapData(): Promise<void> {
   const errors: string[] = [];
@@ -25,9 +40,12 @@ export async function exportMapData(): Promise<void> {
     if (e.type === "portal" && !e.targetEdgeId)
       errors.push(`Portal ${e.id.substring(0, 4)} is missing a target.`);
   });
-  if (State.faces.length === 0) errors.push("Map has no closed rooms (sectors).");
+  if (State.faces.length === 0)
+    errors.push("Map has no closed rooms (sectors).");
   if (errors.length > 0) {
-    alert("🚨 Map Validation Failed on Active Level 🚨\n\n" + errors.join("\n"));
+    alert(
+      "🚨 Map Validation Failed on Active Level 🚨\n\n" + errors.join("\n"),
+    );
     return;
   }
 
@@ -50,9 +68,13 @@ export async function exportMapData(): Promise<void> {
     applyRawStateSnapshot(level.rawData);
     const compiledLevel = compileCurrentStateToJSON(level.id);
     const filename = `${level.id}.json`;
-    zip.folder("levels")!.file(filename, JSON.stringify(compiledLevel, null, 2));
+    zip
+      .folder("levels")!
+      .file(filename, JSON.stringify(compiledLevel, null, 2));
     const nextLevelId =
-      i + 1 < Campaign.levels.length ? `${Campaign.levels[i + 1]!.id}.json` : null;
+      i + 1 < Campaign.levels.length
+        ? `${Campaign.levels[i + 1]!.id}.json`
+        : null;
     manifest.levels[`levels/${filename}`] = {
       next_level: nextLevelId ? `levels/${nextLevelId}` : null,
     };
@@ -60,6 +82,8 @@ export async function exportMapData(): Promise<void> {
 
   applyRawStateSnapshot(Campaign.levels[originalIndex]!.rawData);
   zip.file("campaign.json", JSON.stringify(manifest, null, 2));
+
+  zip.file("workspace_backup.json", JSON.stringify(Campaign, null, 2));
 
   const blob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(blob);
@@ -78,7 +102,12 @@ function compileCurrentStateToJSON(levelId: string) {
     const perimeterVertices: Vertex[] = [];
     const boundaryVertexIds: UUID[] = [];
     const portalNeighbors: PortalNeighbor[] = [];
-    const bounds: Bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    const bounds: Bounds = {
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+    };
     const flatWallTriangles: FlatTri[] = [];
 
     let currEdge: import("../core/dcel").HalfEdge | null = f.outerComponent;
@@ -111,7 +140,9 @@ function compileCurrentStateToJSON(levelId: string) {
         }
 
         if (edgeData.type === "portal" && edgeData.targetEdgeId) {
-          const targetHE = State.halfEdges.find((he) => he.edge.id === edgeData.targetEdgeId);
+          const targetHE = State.halfEdges.find(
+            (he) => he.edge.id === edgeData.targetEdgeId,
+          );
           if (targetHE && targetHE.face) {
             portalNeighbors.push({
               neighborSectorId: targetHE.face.id,
@@ -135,8 +166,24 @@ function compileCurrentStateToJSON(levelId: string) {
 
           flatWallTriangles.push({
             positions: [
-              v2.x, zF2, v2.y, v1.x, zF1, v1.y, v1.x, zC1, v1.y,
-              v2.x, zF2, v2.y, v1.x, zC1, v1.y, v2.x, zC2, v2.y,
+              v2.x,
+              zF2,
+              v2.y,
+              v1.x,
+              zF1,
+              v1.y,
+              v1.x,
+              zC1,
+              v1.y,
+              v2.x,
+              zF2,
+              v2.y,
+              v1.x,
+              zC1,
+              v1.y,
+              v2.x,
+              zC2,
+              v2.y,
             ],
             uvs: [texU, 0, 0, 0, 0, texV, texU, 0, 0, texV, texU, texV],
             textureId: edgeData.textureId,
@@ -153,26 +200,44 @@ function compileCurrentStateToJSON(levelId: string) {
     indices2D.forEach(([v1, v2, v3]) => {
       flatFloorTriangles.push({
         positions: [
-          v1.x, f.floorHeight + (v1.zFloorOffset || 0), v1.y,
-          v2.x, f.floorHeight + (v2.zFloorOffset || 0), v2.y,
-          v3.x, f.floorHeight + (v3.zFloorOffset || 0), v3.y,
+          v1.x,
+          f.floorHeight + (v1.zFloorOffset || 0),
+          v1.y,
+          v2.x,
+          f.floorHeight + (v2.zFloorOffset || 0),
+          v2.y,
+          v3.x,
+          f.floorHeight + (v3.zFloorOffset || 0),
+          v3.y,
         ],
         uvs: [
-          v1.x / TEXTURE_SCALE, v1.y / TEXTURE_SCALE,
-          v2.x / TEXTURE_SCALE, v2.y / TEXTURE_SCALE,
-          v3.x / TEXTURE_SCALE, v3.y / TEXTURE_SCALE,
+          v1.x / TEXTURE_SCALE,
+          v1.y / TEXTURE_SCALE,
+          v2.x / TEXTURE_SCALE,
+          v2.y / TEXTURE_SCALE,
+          v3.x / TEXTURE_SCALE,
+          v3.y / TEXTURE_SCALE,
         ],
       });
       flatCeilTriangles.push({
         positions: [
-          v1.x, f.ceilHeight + (v1.zCeilOffset || 0), v1.y,
-          v3.x, f.ceilHeight + (v3.zCeilOffset || 0), v3.y,
-          v2.x, f.ceilHeight + (v2.zCeilOffset || 0), v2.y,
+          v1.x,
+          f.ceilHeight + (v1.zCeilOffset || 0),
+          v1.y,
+          v3.x,
+          f.ceilHeight + (v3.zCeilOffset || 0),
+          v3.y,
+          v2.x,
+          f.ceilHeight + (v2.zCeilOffset || 0),
+          v2.y,
         ],
         uvs: [
-          v1.x / TEXTURE_SCALE, v1.y / TEXTURE_SCALE,
-          v3.x / TEXTURE_SCALE, v3.y / TEXTURE_SCALE,
-          v2.x / TEXTURE_SCALE, v2.y / TEXTURE_SCALE,
+          v1.x / TEXTURE_SCALE,
+          v1.y / TEXTURE_SCALE,
+          v3.x / TEXTURE_SCALE,
+          v3.y / TEXTURE_SCALE,
+          v2.x / TEXTURE_SCALE,
+          v2.y / TEXTURE_SCALE,
         ],
       });
     });
@@ -220,7 +285,8 @@ function compileCurrentStateToJSON(levelId: string) {
 export function importMapData(jsonString: string): void {
   try {
     const mapData = JSON.parse(jsonString);
-    if (!mapData.vertices || !mapData.edges) throw new Error("Invalid map format");
+    if (!mapData.vertices || !mapData.edges)
+      throw new Error("Invalid map format");
 
     State.vertices = (mapData.vertices as Array<RawVertexLite>).map((v) => {
       const nv = new Vertex(v.x, v.y, v.id);
@@ -272,7 +338,47 @@ export function importMapData(jsonString: string): void {
   }
 }
 
-interface RawVertexLite { id: UUID; x: number; y: number; zFloorOffset?: number; zCeilOffset?: number }
+export async function importWorkspace(file: File) {
+  try {
+    const zip = new JSZip();
+    const unzipped = await zip.loadAsync(file);
+
+    // 1. Look for the raw backup file inside the zip
+    const backupFile = unzipped.file("workspace_backup.json");
+    if (!backupFile) {
+      alert("Invalid file. No workspace_backup.json found inside the ZIP.");
+      return;
+    }
+
+    // 2. Read the JSON and hydrate the Campaign object
+    const backupText = await backupFile.async("text");
+    const data = JSON.parse(backupText);
+
+    Campaign.name = data.name;
+    Campaign.activeLevelIndex = data.activeLevelIndex;
+    Campaign.levels = data.levels;
+
+    // 3. Apply the state to the canvas and save to local storage
+    applyRawStateSnapshot(Campaign.levels[Campaign.activeLevelIndex]!.rawData);
+    saveEditorStateToStorage();
+
+    // 4. Force the UI to wake up and redraw the new tabs
+    window.dispatchEvent(new Event("orc_level_switched"));
+  } catch (err) {
+    console.error("Failed to parse workspace:", err);
+    alert(
+      "Failed to load workspace. Ensure you are uploading a valid ORC .zip file.",
+    );
+  }
+}
+
+interface RawVertexLite {
+  id: UUID;
+  x: number;
+  y: number;
+  zFloorOffset?: number;
+  zCeilOffset?: number;
+}
 interface RawEdgeLite {
   id: UUID;
   v1Id: UUID;
