@@ -60,6 +60,7 @@ const MAX_ZOOM = 20.0;
 
 let draggingPortalId: UUID | null = null;
 let isMouseDown = false;
+let isDragging = false;
 let currentAnchorId: UUID | null = null;
 let currentRawMouse: Vec2 = [0, 0];
 let boxStartWorld: Vec2 | null = null;
@@ -348,13 +349,22 @@ canvas.addEventListener("mousedown", (e) => {
         State.selectedEdgeId.clear();
         State.selectedEdgeId.add(grabArrow.id);
         UI.updatePropertiesPanel();
+        isMouseDown = true; // FIXED: Now you can drag arrows!
         return;
       }
+
+      isDragging = false; // Reset the drag tracker
+      initialDragStateSnapshot = {
+        v: State.vertices.map(cloneVertex),
+        e: State.edges.map(cloneEdge),
+        ent: State.entities.map(cloneEntity),
+      };
 
       const hitEnt = State.entities.find(
         (ent) =>
           Math.hypot(ent.x - world[0], ent.y - world[1]) < 12 / State.zoom,
       );
+
       if (hitEnt) {
         State.selectedFaceId.clear();
         State.selectedEdgeId.clear();
@@ -368,167 +378,148 @@ canvas.addEventListener("mousedown", (e) => {
           State.selectedEntityIds.add(hitEnt.id);
         }
         UI.updatePropertiesPanel();
-        return;
-      }
-
-      const grabV = findVertexAt(world);
-      const grabE = findEdgeAt(world);
-      let grabF: ReturnType<(typeof State.faces)["find"]> = undefined;
-      for (const face of State.faces) {
-        if (isPointInFace(world, face)) {
-          grabF = face;
-          break;
+        // FIXED: Removed the 'return;' so it falls through to allow dragging!
+      } else {
+        const grabV = findVertexAt(world);
+        const grabE = findEdgeAt(world);
+        let grabF: Face | null = null;
+        for (const face of State.faces) {
+          if (isPointInFace(world, face)) {
+            grabF = face;
+            break;
+          }
         }
-      }
 
-      initialDragStateSnapshot = {
-        v: State.vertices.map(cloneVertex),
-        e: State.edges.map(cloneEdge),
-        ent: State.entities.map(cloneEntity),
-      };
-
-      if (grabV) {
-        State.selectedEdgeId.clear();
-        State.selectedFaceId.clear();
-        if (e.shiftKey) {
-          if (State.selectedVertices.has(grabV.id))
-            State.selectedVertices.delete(grabV.id);
-          else State.selectedVertices.add(grabV.id);
-        } else if (!State.selectedVertices.has(grabV.id)) {
-          State.selectedVertices.clear();
-          State.selectedVertices.add(grabV.id);
-        }
-        UI.updatePropertiesPanel();
-      } else if (
-        grabE &&
-        (e.shiftKey ||
-          e.ctrlKey ||
-          e.metaKey ||
-          !State.selectedEdgeId.has(grabE.id))
-      ) {
-        State.selectedFaceId.clear();
-        if (e.ctrlKey || e.metaKey) {
-          const v1 = getV(State.vertices, grabE.v1Id)!;
-          const v2 = getV(State.vertices, grabE.v2Id)!;
-          const dx = v2.x - v1.x,
-            dy = v2.y - v1.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = -(dy / len) * 0.5,
-            ny = (dx / len) * 0.5;
-
-          const nv1 = new Vertex(v1.x + nx, v1.y + ny);
-          const nv2 = new Vertex(v2.x + nx, v2.y + ny);
-          State.vertices.push(nv1, nv2);
-
-          const eNew = new Edge(nv1.id, nv2.id);
-          eNew.type = grabE.type;
-          eNew.textureId = grabE.textureId;
-          const eSide1 = new Edge(grabE.v1Id, nv1.id);
-          const eSide2 = new Edge(grabE.v2Id, nv2.id);
-          State.edges.push(eNew, eSide1, eSide2);
-
+        if (grabV) {
           State.selectedEdgeId.clear();
-          State.selectedEdgeId.add(eNew.id);
-          State.selectedVertices.clear();
-          State.selectedVertices.add(nv1.id);
-          State.selectedVertices.add(nv2.id);
-
-          initialDragStateSnapshot = {
-            v: State.vertices.map(cloneVertex),
-            e: State.edges.map(cloneEdge),
-            ent: State.entities.map(cloneEntity),
-          };
-          UI.updatePropertiesPanel();
-        } else if (e.shiftKey) {
-          if (State.selectedEdgeId.has(grabE.id)) {
-            State.selectedEdgeId.delete(grabE.id);
+          State.selectedFaceId.clear();
+          if (e.shiftKey) {
+            if (State.selectedVertices.has(grabV.id))
+              State.selectedVertices.delete(grabV.id);
+            else State.selectedVertices.add(grabV.id);
+          } else if (!State.selectedVertices.has(grabV.id)) {
             State.selectedVertices.clear();
-            State.edges.forEach((edge) => {
-              if (State.selectedEdgeId.has(edge.id)) {
-                State.selectedVertices.add(edge.v1Id);
-                State.selectedVertices.add(edge.v2Id);
-              }
-            });
+            State.selectedVertices.add(grabV.id);
+          }
+          UI.updatePropertiesPanel();
+        } else if (isPointInSelectionBounds(world)) {
+          // Do nothing, drag the selection
+        } else if (
+          grabE &&
+          (e.shiftKey ||
+            e.ctrlKey ||
+            e.metaKey ||
+            !State.selectedEdgeId.has(grabE.id))
+        ) {
+          State.selectedFaceId.clear();
+          // ... (Extrusion logic stays exactly the same) ...
+          if (e.ctrlKey || e.metaKey) {
+            const v1 = getV(State.vertices, grabE.v1Id);
+            const v2 = getV(State.vertices, grabE.v2Id);
+            if (v1 && v2) {
+              const dx = v2.x - v1.x,
+                dy = v2.y - v1.y;
+              const len = Math.hypot(dx, dy);
+              const nx = -(dy / len) * 0.5,
+                ny = (dx / len) * 0.5;
+
+              const nv1 = new Vertex(v1.x + nx, v1.y + ny);
+              const nv2 = new Vertex(v2.x + nx, v2.y + ny);
+              State.vertices.push(nv1, nv2);
+
+              const eNew = new Edge(nv1.id, nv2.id);
+              eNew.type = grabE.type;
+              eNew.textureId = grabE.textureId;
+
+              const eSide1 = new Edge(grabE.v1Id, nv1.id);
+              const eSide2 = new Edge(grabE.v2Id, nv2.id);
+
+              State.edges.push(eNew, eSide1, eSide2);
+
+              State.selectedEdgeId.clear();
+              State.selectedEdgeId.add(eNew.id);
+              State.selectedVertices.clear();
+              State.selectedVertices.add(nv1.id);
+              State.selectedVertices.add(nv2.id);
+
+              initialDragStateSnapshot = {
+                v: State.vertices.map(cloneVertex),
+                e: State.edges.map(cloneEdge),
+                ent: State.entities.map(cloneEntity),
+              };
+              UI.updatePropertiesPanel();
+            }
+          } else if (e.shiftKey) {
+            if (State.selectedEdgeId.has(grabE.id)) {
+              State.selectedEdgeId.delete(grabE.id);
+              State.selectedVertices.clear();
+              State.edges.forEach((edge) => {
+                if (State.selectedEdgeId.has(edge.id)) {
+                  State.selectedVertices.add(edge.v1Id);
+                  State.selectedVertices.add(edge.v2Id);
+                }
+              });
+            } else {
+              State.selectedEdgeId.add(grabE.id);
+              State.selectedVertices.add(grabE.v1Id);
+              State.selectedVertices.add(grabE.v2Id);
+            }
           } else {
+            State.selectedEdgeId.clear();
+            State.selectedVertices.clear();
             State.selectedEdgeId.add(grabE.id);
             State.selectedVertices.add(grabE.v1Id);
             State.selectedVertices.add(grabE.v2Id);
           }
+          UI.updatePropertiesPanel();
+        } else if (grabF) {
+          State.selectedEdgeId.clear();
+          if (e.shiftKey) {
+            if (State.selectedFaceId.has(grabF.id)) {
+              State.selectedFaceId.delete(grabF.id);
+              State.selectedVertices.clear();
+              State.faces.forEach((face) => {
+                if (State.selectedFaceId.has(face.id)) {
+                  let loopE = face.outerComponent;
+                  if (loopE)
+                    do {
+                      State.selectedVertices.add(loopE.originId);
+                      loopE = loopE.next;
+                    } while (loopE && loopE !== face.outerComponent);
+                }
+              });
+            } else {
+              State.selectedFaceId.add(grabF.id);
+              let loopE = grabF.outerComponent;
+              if (loopE)
+                do {
+                  State.selectedVertices.add(loopE.originId);
+                  loopE = loopE.next;
+                } while (loopE && loopE !== grabF.outerComponent);
+            }
+          } else if (!State.selectedFaceId.has(grabF.id)) {
+            State.selectedFaceId.clear();
+            State.selectedVertices.clear();
+            State.selectedFaceId.add(grabF.id);
+            let loopE = grabF.outerComponent;
+            if (loopE)
+              do {
+                State.selectedVertices.add(loopE.originId);
+                loopE = loopE.next;
+              } while (loopE && loopE !== grabF.outerComponent);
+          }
+          UI.updatePropertiesPanel();
         } else {
           State.selectedEdgeId.clear();
-          State.selectedVertices.clear();
-          State.selectedEdgeId.add(grabE.id);
-          State.selectedVertices.add(grabE.v1Id);
-          State.selectedVertices.add(grabE.v2Id);
-        }
-        UI.updatePropertiesPanel();
-      } else if (isPointInSelectionBounds(world)) {
-        // fall through to drag
-      } else if (grabE) {
-        State.selectedFaceId.clear();
-        if (e.shiftKey) {
-          if (State.selectedEdgeId.has(grabE.id)) {
-            State.selectedEdgeId.delete(grabE.id);
-            State.selectedVertices.clear();
-            State.edges.forEach((edge) => {
-              if (State.selectedEdgeId.has(edge.id)) {
-                State.selectedVertices.add(edge.v1Id);
-                State.selectedVertices.add(edge.v2Id);
-              }
-            });
-          } else {
-            State.selectedEdgeId.add(grabE.id);
-            State.selectedVertices.add(grabE.v1Id);
-            State.selectedVertices.add(grabE.v2Id);
-          }
-        } else if (!State.selectedEdgeId.has(grabE.id)) {
-          State.selectedEdgeId.clear();
-          State.selectedVertices.clear();
-          State.selectedEdgeId.add(grabE.id);
-          State.selectedVertices.add(grabE.v1Id);
-          State.selectedVertices.add(grabE.v2Id);
-        }
-        UI.updatePropertiesPanel();
-      } else if (grabF) {
-        State.selectedEdgeId.clear();
-        const selectFaceVerts = (face: typeof grabF) => {
-          let loopE = face!.outerComponent;
-          if (!loopE) return;
-          const start = loopE;
-          do {
-            if (!loopE) break;
-            State.selectedVertices.add(loopE.originId);
-            loopE = loopE.next;
-          } while (loopE && loopE !== start);
-        };
-        if (e.shiftKey) {
-          if (State.selectedFaceId.has(grabF.id)) {
-            State.selectedFaceId.delete(grabF.id);
-            State.selectedVertices.clear();
-            State.faces.forEach((face) => {
-              if (State.selectedFaceId.has(face.id)) selectFaceVerts(face);
-            });
-          } else {
-            State.selectedFaceId.add(grabF.id);
-            selectFaceVerts(grabF);
-          }
-        } else if (!State.selectedFaceId.has(grabF.id)) {
           State.selectedFaceId.clear();
-          State.selectedVertices.clear();
-          State.selectedFaceId.add(grabF.id);
-          selectFaceVerts(grabF);
+          if (!e.shiftKey) {
+            State.selectedVertices.clear();
+            State.selectedEntityIds.clear();
+          }
+          isBoxSelecting = true;
+          boxStartWorld = [...world] as Vec2;
+          UI.updatePropertiesPanel();
         }
-        UI.updatePropertiesPanel();
-      } else {
-        State.selectedEdgeId.clear();
-        State.selectedFaceId.clear();
-        if (!e.shiftKey) {
-          State.selectedVertices.clear();
-          State.selectedEntityIds.clear();
-        }
-        isBoxSelecting = true;
-        boxStartWorld = [...world] as Vec2;
-        UI.updatePropertiesPanel();
       }
       break;
     }
@@ -589,6 +580,8 @@ canvas.addEventListener("mousemove", (e) => {
       if (isBoxSelecting) return;
       const dx = world[0] - dragLastWorld[0];
       const dy = world[1] - dragLastWorld[1];
+
+      if (dx !== 0 || dy !== 0) isDragging = true;
 
       if (State.selectedEntityIds.size > 0) {
         State.selectedEntityIds.forEach((eid) => {
@@ -770,6 +763,7 @@ window.addEventListener("mouseup", (e) => {
         boxStartWorld = null;
         UI.updatePropertiesPanel();
       } else if (initialDragStateSnapshot) {
+        if (!isDragging) initialDragStateSnapshot = null;
         State.selectedVertices.forEach((vid) => {
           const v = getV(State.vertices, vid);
           if (!v) return;
