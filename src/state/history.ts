@@ -1,5 +1,12 @@
 import { buildDCEL } from "../core/dcel";
-import { Edge, Vertex, cloneEdge, cloneVertex } from "../core/model";
+import {
+  Edge,
+  Entity,
+  Vertex,
+  cloneEdge,
+  cloneEntity,
+  cloneVertex,
+} from "../core/model";
 import { State, saveEditorStateToStorage } from "./state";
 import type { UUID } from "../core/types";
 
@@ -50,6 +57,8 @@ export class GeometryChangeCommand {
   newE: Edge[];
   oldSel: UUID[];
   newSel: UUID[];
+  oldEnt?: Entity[];
+  newEnt?: Entity[];
 
   constructor(
     oldV: Vertex[],
@@ -58,6 +67,8 @@ export class GeometryChangeCommand {
     newE: Edge[],
     oldSel: Iterable<UUID>,
     newSel: Iterable<UUID>,
+    oldEnt?: Entity[],
+    newEnt?: Entity[],
   ) {
     this.oldV = oldV.map(cloneVertex);
     this.oldE = oldE.map(cloneEdge);
@@ -65,18 +76,28 @@ export class GeometryChangeCommand {
     this.newE = newE.map(cloneEdge);
     this.oldSel = [...oldSel];
     this.newSel = [...newSel];
+    this.oldEnt = oldEnt ? oldEnt.map(cloneEntity) : undefined;
+    this.newEnt = newEnt ? newEnt.map(cloneEntity) : undefined;
   }
 
-  execute(): void {
+  execute() {
     State.vertices = this.newV.map(cloneVertex);
     State.edges = this.newE.map(cloneEdge);
+    if (this.newEnt) State.entities = this.newEnt.map(cloneEntity);
+
     State.selectedVertices = new Set(this.newSel);
+    State.selectedEdgeId.clear();
+    State.selectedFaceId.clear();
   }
 
-  undo(): void {
+  undo() {
     State.vertices = this.oldV.map(cloneVertex);
     State.edges = this.oldE.map(cloneEdge);
+    if (this.oldEnt) State.entities = this.oldEnt.map(cloneEntity);
+
     State.selectedVertices = new Set(this.oldSel);
+    State.selectedEdgeId.clear();
+    State.selectedFaceId.clear();
   }
 
   snapshot(): CommandSnapshot {

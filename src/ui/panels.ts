@@ -41,6 +41,7 @@ export const UI = {
   activeListeningRow: null as HTMLElement | null,
   importBtn: null as unknown as HTMLButtonElement,
   fileInput: null as unknown as HTMLInputElement,
+  toggleSidebarBtn: null as unknown as HTMLButtonElement,
 
   roomInspector: null as unknown as ORC_Inspector,
   wallInspector: null as unknown as ORC_Inspector,
@@ -54,6 +55,9 @@ export const UI = {
     this.redoBtn = document.getElementById("btn-redo") as HTMLButtonElement;
     this.rotateBtn = document.getElementById("btn-rotate") as HTMLButtonElement;
     this.deleteBtn = document.getElementById("btn-delete") as HTMLButtonElement;
+    this.toggleSidebarBtn = document.getElementById(
+      "btn-toggle-sidebar",
+    ) as HTMLButtonElement;
     this.importBtn = document.getElementById(
       "btn-import-workspace",
     ) as HTMLButtonElement;
@@ -194,6 +198,12 @@ export const UI = {
           saveEditorStateToStorage();
         }
       });
+    });
+
+    this.toggleSidebarBtn.addEventListener("click", () => {
+      document.getElementById("app")?.classList.toggle("sidebar-closed");
+      // Force the canvas to recalculate its width instantly
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 10);
     });
 
     this.undoBtn.addEventListener("click", () => {

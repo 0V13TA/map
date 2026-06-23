@@ -4,17 +4,34 @@ import { CommandHistory, GeometryChangeCommand } from "./state/history";
 import { UI } from "./ui/panels";
 import { triangulatePolygonPerimeter } from "./core/triangulation";
 import {
-  State, loadEditorStateFromStorage, saveEditorStateToStorage,
+  State,
+  loadEditorStateFromStorage,
+  saveEditorStateToStorage,
 } from "./state/state";
 import {
-  findEdgeAt, findVertexAt, worldFromMouse, findPortalArrowAt,
-  computeStateAfterEdges, isPointInSelectionBounds, getMagneticSnapPosition,
+  findEdgeAt,
+  findVertexAt,
+  worldFromMouse,
+  findPortalArrowAt,
+  computeStateAfterEdges,
+  isPointInSelectionBounds,
+  getMagneticSnapPosition,
 } from "./core/geometry";
 import {
-  Edge, Entity, Vertex, cloneEdge, cloneVertex, getOrCreateVertexInPool, getV,
+  Edge,
+  Entity,
+  Vertex,
+  cloneEdge,
+  cloneEntity,
+  cloneVertex,
+  getOrCreateVertexInPool,
+  getV,
 } from "./core/model";
 import type { UUID, Vec2 } from "./core/types";
-import type { InspectorChangeDetail, InspectorActionDetail } from "./ui/inspector";
+import type {
+  InspectorChangeDetail,
+  InspectorActionDetail,
+} from "./ui/inspector";
 
 State.History = new CommandHistory();
 
@@ -27,7 +44,7 @@ const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 host.appendChild(canvas);
 canvas.tabIndex = 0;
 canvas.style.outline = "none";
-
+canvas.addEventListener("dragstart", (e) => e.preventDefault());
 function resizeCanvas(): void {
   const rect = host.getBoundingClientRect();
   canvas.width = Math.floor(rect.width);
@@ -48,12 +65,18 @@ let currentRawMouse: Vec2 = [0, 0];
 let boxStartWorld: Vec2 | null = null;
 let isBoxSelecting = false;
 let dragLastWorld: Vec2 = [0, 0];
-let initialDragStateSnapshot: { v: Vertex[]; e: Edge[] } | null = null;
+let initialDragStateSnapshot: { v: Vertex[]; e: Edge[]; ent: Entity[] } | null =
+  null;
 let isPanning = false;
 let panLastScreen: Vec2 = [0, 0];
 let hoveredVertexId: UUID | null = null;
 let hoveredEdgeId: UUID | null = null;
-let actionStartSnapshot: { v: Vertex[]; e: Edge[]; sel: Set<UUID> } | null = null;
+let actionStartSnapshot: {
+  v: Vertex[];
+  e: Edge[];
+  sel: Set<UUID>;
+  ent: Entity[];
+} | null = null;
 
 // =========================
 // INPUT ROUTER
@@ -61,16 +84,25 @@ let actionStartSnapshot: { v: Vertex[]; e: Edge[]; sel: Set<UUID> } | null = nul
 canvas.addEventListener("keydown", (e) => {
   let modifierPrefix = "";
   if (e.ctrlKey || e.metaKey) modifierPrefix += "Ctrl+";
-  const action = State.keyBindings[modifierPrefix + e.code] as Action | undefined;
+  const action = State.keyBindings[modifierPrefix + e.code] as
+    | Action
+    | undefined;
   if (!action) return;
   e.preventDefault();
 
   switch (action) {
-    case ACTIONS.UNDO: State.History?.undo(); break;
-    case ACTIONS.REDO: State.History?.redo(); break;
+    case ACTIONS.UNDO:
+      State.History?.undo();
+      break;
+    case ACTIONS.REDO:
+      State.History?.redo();
+      break;
     case ACTIONS.SELECT_ALL:
       State.selectedVertices.clear();
       State.vertices.forEach((v) => State.selectedVertices.add(v.id));
+      State.selectedEntityIds.clear();
+      State.entities.forEach((ent) => State.selectedEntityIds.add(ent.id));
+      UI.updatePropertiesPanel();
       break;
     case ACTIONS.SET_TOOL_LINE:
     case ACTIONS.SET_TOOL_NGON:
@@ -91,56 +123,117 @@ canvas.addEventListener("keydown", (e) => {
       }
       break;
     }
-    case ACTIONS.PAN_UP: State.offsetY += 40 / State.zoom; break;
-    case ACTIONS.PAN_DOWN: State.offsetY -= 40 / State.zoom; break;
-    case ACTIONS.PAN_LEFT: State.offsetX += 40 / State.zoom; break;
-    case ACTIONS.PAN_RIGHT: State.offsetX -= 40 / State.zoom; break;
+    case ACTIONS.PAN_UP:
+      State.offsetY += 40 / State.zoom;
+      break;
+    case ACTIONS.PAN_DOWN:
+      State.offsetY -= 40 / State.zoom;
+      break;
+    case ACTIONS.PAN_LEFT:
+      State.offsetX += 40 / State.zoom;
+      break;
+    case ACTIONS.PAN_RIGHT:
+      State.offsetX -= 40 / State.zoom;
+      break;
     case ACTIONS.DELETE_SELECTION:
       if (State.selectedFaceId.size > 0) {
         const edgesToRemove = new Set<UUID>();
-        const faceHalfEdges = State.halfEdges.filter((he) => he.face && State.selectedFaceId.has(he.face.id));
+        const faceHalfEdges = State.halfEdges.filter(
+          (he) => he.face && State.selectedFaceId.has(he.face.id),
+        );
         faceHalfEdges.forEach((he) => {
           if (!he.twin?.face || State.selectedFaceId.has(he.twin.face.id)) {
             edgesToRemove.add(he.edge.id);
           }
         });
         const newE = State.edges.filter((e) => !edgesToRemove.has(e.id));
-        const newV = State.vertices.filter((v) => newE.some((e) => e.v1Id === v.id || e.v2Id === v.id));
+        const newV = State.vertices.filter((v) =>
+          newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
+        );
         State.History!.execute(
-          new GeometryChangeCommand(State.vertices, State.edges, newV, newE, State.selectedVertices, []),
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            newV,
+            newE,
+            State.selectedVertices,
+            [],
+          ),
         );
         State.selectedFaceId.clear();
         State.selectedVertices.clear();
         UI.updatePropertiesPanel();
       } else if (State.selectedEdgeId.size > 0) {
         const newE = State.edges.filter((e) => !State.selectedEdgeId.has(e.id));
-        const newV = State.vertices.filter((v) => newE.some((e) => e.v1Id === v.id || e.v2Id === v.id));
+        const newV = State.vertices.filter((v) =>
+          newE.some((e) => e.v1Id === v.id || e.v2Id === v.id),
+        );
         State.History!.execute(
-          new GeometryChangeCommand(State.vertices, State.edges, newV, newE, State.selectedVertices, []),
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            newV,
+            newE,
+            State.selectedVertices,
+            [],
+          ),
         );
         State.selectedEdgeId.clear();
         State.selectedVertices.clear();
         UI.updatePropertiesPanel();
       } else if (State.selectedVertices.size > 0) {
         const newE = State.edges.filter(
-          (e) => !State.selectedVertices.has(e.v1Id) && !State.selectedVertices.has(e.v2Id),
+          (e) =>
+            !State.selectedVertices.has(e.v1Id) &&
+            !State.selectedVertices.has(e.v2Id),
         );
-        const newV = State.vertices.filter((v) => !State.selectedVertices.has(v.id));
+        const newV = State.vertices.filter(
+          (v) => !State.selectedVertices.has(v.id),
+        );
         State.History!.execute(
-          new GeometryChangeCommand(State.vertices, State.edges, newV, newE, State.selectedVertices, []),
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            newV,
+            newE,
+            State.selectedVertices,
+            [],
+          ),
         );
         State.selectedEdgeId.clear();
         State.selectedFaceId.clear();
       } else if (State.selectedEntityIds.size > 0) {
-        State.entities = State.entities.filter((e) => !State.selectedEntityIds.has(e.id));
+        // NEW: Record deletion in History
+        const oldEnt = State.entities.map(cloneEntity);
+        const newEnt = State.entities.filter(
+          (e) => !State.selectedEntityIds.has(e.id),
+        );
+
+        State.History!.execute(
+          new GeometryChangeCommand(
+            State.vertices,
+            State.edges,
+            State.vertices,
+            State.edges,
+            State.selectedVertices,
+            State.selectedVertices,
+            oldEnt,
+            newEnt,
+          ),
+        );
+        State.selectedEntityIds.clear();
       }
       break;
     case ACTIONS.ROTATE_SELECTION:
       if (State.selectedVertices.size > 0) {
-        let cx = 0, cy = 0;
+        let cx = 0,
+          cy = 0;
         State.selectedVertices.forEach((vid) => {
           const v = getV(State.vertices, vid);
-          if (v) { cx += v.x; cy += v.y; }
+          if (v) {
+            cx += v.x;
+            cy += v.y;
+          }
         });
         cx /= State.selectedVertices.size;
         cy /= State.selectedVertices.size;
@@ -151,7 +244,8 @@ canvas.addEventListener("keydown", (e) => {
         State.selectedVertices.forEach((vid) => {
           const v = getV(State.vertices, vid);
           if (!v) return;
-          const dx = v.x - cx, dy = v.y - cy;
+          const dx = v.x - cx,
+            dy = v.y - cy;
           v.x = cx + dx * Math.cos(angle) - dy * Math.sin(angle);
           v.y = cy + dx * Math.sin(angle) + dy * Math.cos(angle);
         });
@@ -159,13 +253,27 @@ canvas.addEventListener("keydown", (e) => {
         const staticEdges: Edge[] = [];
         const movedEdges: Edge[] = [];
         State.edges.forEach((e) => {
-          if (State.selectedVertices.has(e.v1Id) || State.selectedVertices.has(e.v2Id)) {
+          if (
+            State.selectedVertices.has(e.v1Id) ||
+            State.selectedVertices.has(e.v2Id)
+          ) {
             movedEdges.push(cloneEdge(e));
           } else staticEdges.push(e);
         });
-        const next = computeStateAfterEdges(State.vertices, staticEdges, movedEdges);
+        const next = computeStateAfterEdges(
+          State.vertices,
+          staticEdges,
+          movedEdges,
+        );
         State.History!.execute(
-          new GeometryChangeCommand(origV, origE, next.newV, next.newE, State.selectedVertices, State.selectedVertices),
+          new GeometryChangeCommand(
+            origV,
+            origE,
+            next.newV,
+            next.newE,
+            State.selectedVertices,
+            State.selectedVertices,
+          ),
         );
       }
       break;
@@ -197,6 +305,7 @@ canvas.addEventListener("mousedown", (e) => {
     v: State.vertices.map(cloneVertex),
     e: State.edges.map(cloneEdge),
     sel: new Set(State.selectedVertices),
+    ent: State.entities.map(cloneEntity),
   };
   currentRawMouse = [...world] as Vec2;
   dragLastWorld = [...world] as Vec2;
@@ -209,7 +318,11 @@ canvas.addEventListener("mousedown", (e) => {
       const hitV = findVertexAt(world);
       if (!hitV) {
         const snapped = getMagneticSnapPosition(world, new Set(), SNAP);
-        currentAnchorId = getOrCreateVertexInPool(State.vertices, snapped[0], snapped[1]);
+        currentAnchorId = getOrCreateVertexInPool(
+          State.vertices,
+          snapped[0],
+          snapped[1],
+        );
       } else currentAnchorId = hitV.id;
       break;
     }
@@ -217,7 +330,11 @@ canvas.addEventListener("mousedown", (e) => {
       if (e.altKey) return;
       if (!currentAnchorId) {
         const snapped = getMagneticSnapPosition(world, new Set(), SNAP);
-        currentAnchorId = getOrCreateVertexInPool(State.vertices, snapped[0], snapped[1]);
+        currentAnchorId = getOrCreateVertexInPool(
+          State.vertices,
+          snapped[0],
+          snapped[1],
+        );
       }
       break;
     }
@@ -235,14 +352,16 @@ canvas.addEventListener("mousedown", (e) => {
       }
 
       const hitEnt = State.entities.find(
-        (ent) => Math.hypot(ent.x - world[0], ent.y - world[1]) < 12 / State.zoom,
+        (ent) =>
+          Math.hypot(ent.x - world[0], ent.y - world[1]) < 12 / State.zoom,
       );
       if (hitEnt) {
         State.selectedFaceId.clear();
         State.selectedEdgeId.clear();
         State.selectedVertices.clear();
         if (e.shiftKey) {
-          if (State.selectedEntityIds.has(hitEnt.id)) State.selectedEntityIds.delete(hitEnt.id);
+          if (State.selectedEntityIds.has(hitEnt.id))
+            State.selectedEntityIds.delete(hitEnt.id);
           else State.selectedEntityIds.add(hitEnt.id);
         } else if (!State.selectedEntityIds.has(hitEnt.id)) {
           State.selectedEntityIds.clear();
@@ -254,35 +373,48 @@ canvas.addEventListener("mousedown", (e) => {
 
       const grabV = findVertexAt(world);
       const grabE = findEdgeAt(world);
-      let grabF: ReturnType<typeof State.faces["find"]> = undefined;
+      let grabF: ReturnType<(typeof State.faces)["find"]> = undefined;
       for (const face of State.faces) {
-        if (isPointInFace(world, face)) { grabF = face; break; }
+        if (isPointInFace(world, face)) {
+          grabF = face;
+          break;
+        }
       }
 
       initialDragStateSnapshot = {
         v: State.vertices.map(cloneVertex),
         e: State.edges.map(cloneEdge),
+        ent: State.entities.map(cloneEntity),
       };
 
       if (grabV) {
         State.selectedEdgeId.clear();
         State.selectedFaceId.clear();
         if (e.shiftKey) {
-          if (State.selectedVertices.has(grabV.id)) State.selectedVertices.delete(grabV.id);
+          if (State.selectedVertices.has(grabV.id))
+            State.selectedVertices.delete(grabV.id);
           else State.selectedVertices.add(grabV.id);
         } else if (!State.selectedVertices.has(grabV.id)) {
           State.selectedVertices.clear();
           State.selectedVertices.add(grabV.id);
         }
         UI.updatePropertiesPanel();
-      } else if (grabE && (e.shiftKey || e.ctrlKey || e.metaKey || !State.selectedEdgeId.has(grabE.id))) {
+      } else if (
+        grabE &&
+        (e.shiftKey ||
+          e.ctrlKey ||
+          e.metaKey ||
+          !State.selectedEdgeId.has(grabE.id))
+      ) {
         State.selectedFaceId.clear();
         if (e.ctrlKey || e.metaKey) {
           const v1 = getV(State.vertices, grabE.v1Id)!;
           const v2 = getV(State.vertices, grabE.v2Id)!;
-          const dx = v2.x - v1.x, dy = v2.y - v1.y;
+          const dx = v2.x - v1.x,
+            dy = v2.y - v1.y;
           const len = Math.hypot(dx, dy) || 1;
-          const nx = -(dy / len) * 0.5, ny = (dx / len) * 0.5;
+          const nx = -(dy / len) * 0.5,
+            ny = (dx / len) * 0.5;
 
           const nv1 = new Vertex(v1.x + nx, v1.y + ny);
           const nv2 = new Vertex(v2.x + nx, v2.y + ny);
@@ -304,6 +436,7 @@ canvas.addEventListener("mousedown", (e) => {
           initialDragStateSnapshot = {
             v: State.vertices.map(cloneVertex),
             e: State.edges.map(cloneEdge),
+            ent: State.entities.map(cloneEntity),
           };
           UI.updatePropertiesPanel();
         } else if (e.shiftKey) {
@@ -389,7 +522,10 @@ canvas.addEventListener("mousedown", (e) => {
       } else {
         State.selectedEdgeId.clear();
         State.selectedFaceId.clear();
-        if (!e.shiftKey) State.selectedVertices.clear();
+        if (!e.shiftKey) {
+          State.selectedVertices.clear();
+          State.selectedEntityIds.clear();
+        }
         isBoxSelecting = true;
         boxStartWorld = [...world] as Vec2;
         UI.updatePropertiesPanel();
@@ -399,7 +535,26 @@ canvas.addEventListener("mousedown", (e) => {
     case TOOLS.ENTITY: {
       if (e.altKey) return;
       const snappedEnt = getMagneticSnapPosition(world, new Set(), SNAP);
-      State.entities.push(new Entity(snappedEnt[0], snappedEnt[1], "PlayerSpawn"));
+
+      // Wrap creation in Undo History
+      const oldEnt = State.entities.map(cloneEntity);
+      State.entities.push(
+        new Entity(snappedEnt[0], snappedEnt[1], "PlayerSpawn"),
+      );
+      const newEnt = State.entities.map(cloneEntity);
+
+      State.History!.execute(
+        new GeometryChangeCommand(
+          State.vertices,
+          State.edges,
+          State.vertices,
+          State.edges,
+          State.selectedVertices,
+          State.selectedVertices,
+          oldEnt,
+          newEnt,
+        ),
+      );
       saveEditorStateToStorage();
       break;
     }
@@ -434,15 +589,23 @@ canvas.addEventListener("mousemove", (e) => {
       if (isBoxSelecting) return;
       const dx = world[0] - dragLastWorld[0];
       const dy = world[1] - dragLastWorld[1];
+
       if (State.selectedEntityIds.size > 0) {
         State.selectedEntityIds.forEach((eid) => {
           const ent = State.entities.find((x) => x.id === eid);
-          if (ent) { ent.x += dx; ent.y += dy; }
+          if (ent) {
+            ent.x += dx;
+            ent.y += dy;
+          }
         });
-      } else {
+      }
+      if (State.selectedVertices.size > 0) {
         State.selectedVertices.forEach((vid) => {
           const v = getV(State.vertices, vid);
-          if (v) { v.x += dx; v.y += dy; }
+          if (v) {
+            v.x += dx;
+            v.y += dy;
+          }
         });
       }
       break;
@@ -462,8 +625,14 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mouseup", (e) => {
-  if (isPanning) { isPanning = false; return; }
-  if (e.button === 0 && e.altKey) { isPanning = false; return; }
+  if (isPanning) {
+    isPanning = false;
+    return;
+  }
+  if (e.button === 0 && e.altKey) {
+    isPanning = false;
+    return;
+  }
   if (!isMouseDown) return;
   isMouseDown = false;
   const snapped = getMagneticSnapPosition(currentRawMouse, new Set(), SNAP);
@@ -472,16 +641,23 @@ window.addEventListener("mouseup", (e) => {
     case TOOLS.LINE: {
       if (currentAnchorId && actionStartSnapshot) {
         const hitV = findVertexAt(snapped);
-        const endVId = hitV ? hitV.id : getOrCreateVertexInPool(State.vertices, snapped[0], snapped[1]);
+        const endVId = hitV
+          ? hitV.id
+          : getOrCreateVertexInPool(State.vertices, snapped[0], snapped[1]);
         if (currentAnchorId !== endVId) {
-          const nextState = computeStateAfterEdges(State.vertices, State.edges, [
-            new Edge(currentAnchorId, endVId),
-          ]);
+          const nextState = computeStateAfterEdges(
+            State.vertices,
+            State.edges,
+            [new Edge(currentAnchorId, endVId)],
+          );
           State.History!.execute(
             new GeometryChangeCommand(
-              actionStartSnapshot.v, actionStartSnapshot.e,
-              nextState.newV, nextState.newE,
-              actionStartSnapshot.sel, State.selectedVertices,
+              actionStartSnapshot.v,
+              actionStartSnapshot.e,
+              nextState.newV,
+              nextState.newE,
+              actionStartSnapshot.sel,
+              State.selectedVertices,
             ),
           );
         } else {
@@ -495,10 +671,18 @@ window.addEventListener("mouseup", (e) => {
       if (currentAnchorId && actionStartSnapshot) {
         const anchorV = getV(State.vertices, currentAnchorId);
         if (anchorV) {
-          const radius = Math.hypot(snapped[0] - anchorV.x, snapped[1] - anchorV.y);
+          const radius = Math.hypot(
+            snapped[0] - anchorV.x,
+            snapped[1] - anchorV.y,
+          );
           if (radius > 10) {
-            const sidesInput = document.getElementById("ngon-sides") as HTMLInputElement | null;
-            const sides = Math.max(3, Math.min(12, parseInt(sidesInput?.value ?? "8") || 8));
+            const sidesInput = document.getElementById(
+              "ngon-sides",
+            ) as HTMLInputElement | null;
+            const sides = Math.max(
+              3,
+              Math.min(12, parseInt(sidesInput?.value ?? "8") || 8),
+            );
             const ngonEdges: Edge[] = [];
             let firstVId: UUID | null = null;
             let prevVId: UUID | null = null;
@@ -513,13 +697,21 @@ window.addEventListener("mouseup", (e) => {
               if (prevVId) ngonEdges.push(new Edge(prevVId, currVId));
               prevVId = currVId;
             }
-            if (prevVId && firstVId) ngonEdges.push(new Edge(prevVId, firstVId));
-            const nextState = computeStateAfterEdges(State.vertices, State.edges, ngonEdges);
+            if (prevVId && firstVId)
+              ngonEdges.push(new Edge(prevVId, firstVId));
+            const nextState = computeStateAfterEdges(
+              State.vertices,
+              State.edges,
+              ngonEdges,
+            );
             State.History!.execute(
               new GeometryChangeCommand(
-                actionStartSnapshot.v, actionStartSnapshot.e,
-                nextState.newV, nextState.newE,
-                actionStartSnapshot.sel, State.selectedVertices,
+                actionStartSnapshot.v,
+                actionStartSnapshot.e,
+                nextState.newV,
+                nextState.newE,
+                actionStartSnapshot.sel,
+                State.selectedVertices,
               ),
             );
           } else {
@@ -540,21 +732,27 @@ window.addEventListener("mouseup", (e) => {
             const tEdge = nextE.find((x) => x.id === dropArrow.id);
             if (tEdge) {
               nextE.forEach((x) => {
-                if (x.targetEdgeId === sEdge.id || x.targetEdgeId === tEdge.id) x.targetEdgeId = null;
+                if (x.targetEdgeId === sEdge.id || x.targetEdgeId === tEdge.id)
+                  x.targetEdgeId = null;
               });
               sEdge.targetEdgeId = tEdge.id;
               tEdge.targetEdgeId = sEdge.id;
             }
           } else if (!dropArrow) {
-            nextE.forEach((x) => { if (x.targetEdgeId === sEdge.id) x.targetEdgeId = null; });
+            nextE.forEach((x) => {
+              if (x.targetEdgeId === sEdge.id) x.targetEdgeId = null;
+            });
             sEdge.targetEdgeId = null;
           }
         }
         State.History!.execute(
           new GeometryChangeCommand(
-            actionStartSnapshot.v, actionStartSnapshot.e,
-            actionStartSnapshot.v, nextE,
-            actionStartSnapshot.sel, State.selectedVertices,
+            actionStartSnapshot.v,
+            actionStartSnapshot.e,
+            actionStartSnapshot.v,
+            nextE,
+            actionStartSnapshot.sel,
+            State.selectedVertices,
           ),
         );
         draggingPortalId = null;
@@ -565,16 +763,22 @@ window.addEventListener("mouseup", (e) => {
         const yMin = Math.min(boxStartWorld[1], currentRawMouse[1]);
         const yMax = Math.max(boxStartWorld[1], currentRawMouse[1]);
         State.vertices.forEach((v) => {
-          if (v.x >= xMin && v.x <= xMax && v.y >= yMin && v.y <= yMax) State.selectedVertices.add(v.id);
+          if (v.x >= xMin && v.x <= xMax && v.y >= yMin && v.y <= yMax)
+            State.selectedVertices.add(v.id);
         });
         isBoxSelecting = false;
         boxStartWorld = null;
+        UI.updatePropertiesPanel();
       } else if (initialDragStateSnapshot) {
         State.selectedVertices.forEach((vid) => {
           const v = getV(State.vertices, vid);
           if (!v) return;
           if (State.selectedVertices.size === 1) {
-            const snappedV = getMagneticSnapPosition([v.x, v.y], State.selectedVertices, SNAP);
+            const snappedV = getMagneticSnapPosition(
+              [v.x, v.y],
+              State.selectedVertices,
+              SNAP,
+            );
             v.x = snappedV[0];
             v.y = snappedV[1];
           } else {
@@ -586,7 +790,9 @@ window.addEventListener("mouseup", (e) => {
         const vertexMap = new Map<UUID, UUID>();
         const weldedV: Vertex[] = [];
         State.vertices.forEach((v) => {
-          const existing = weldedV.find((ev) => Math.hypot(ev.x - v.x, ev.y - v.y) < 0.1);
+          const existing = weldedV.find(
+            (ev) => Math.hypot(ev.x - v.x, ev.y - v.y) < 0.1,
+          );
           if (existing) {
             vertexMap.set(v.id, existing.id);
           } else {
@@ -607,7 +813,11 @@ window.addEventListener("mouseup", (e) => {
           ne.portalDirection = e.portalDirection;
           ne.textureId = e.textureId;
           ne.targetEdgeId = e.targetEdgeId;
-          if (State.selectedVertices.has(e.v1Id) || State.selectedVertices.has(e.v2Id)) movedEdges.push(ne);
+          if (
+            State.selectedVertices.has(e.v1Id) ||
+            State.selectedVertices.has(e.v2Id)
+          )
+            movedEdges.push(ne);
           else staticEdges.push(ne);
         });
 
@@ -617,12 +827,21 @@ window.addEventListener("mouseup", (e) => {
           if (mapped) newSelection.add(mapped);
         });
 
-        const nextState = computeStateAfterEdges(weldedV, staticEdges, movedEdges);
+        const nextState = computeStateAfterEdges(
+          weldedV,
+          staticEdges,
+          movedEdges,
+        );
         State.History!.execute(
           new GeometryChangeCommand(
-            initialDragStateSnapshot.v, initialDragStateSnapshot.e,
-            nextState.newV, nextState.newE,
-            State.selectedVertices, newSelection,
+            initialDragStateSnapshot.v,
+            initialDragStateSnapshot.e,
+            nextState.newV,
+            nextState.newE,
+            State.selectedVertices,
+            newSelection,
+            initialDragStateSnapshot.ent,
+            State.entities.map(cloneEntity),
           ),
         );
         initialDragStateSnapshot = null;
@@ -641,20 +860,35 @@ canvas.addEventListener("dblclick", (e) => {
     const hitEdge = findEdgeAt(world);
     if (hitEdge) {
       const snapW = getMagneticSnapPosition(world, new Set(), SNAP);
-      const newVId = getOrCreateVertexInPool(State.vertices, snapW[0], snapW[1]);
+      const newVId = getOrCreateVertexInPool(
+        State.vertices,
+        snapW[0],
+        snapW[1],
+      );
       const e1 = new Edge(hitEdge.v1Id, newVId);
-      e1.type = hitEdge.type; e1.portalDirection = hitEdge.portalDirection;
-      e1.textureId = hitEdge.textureId; e1.targetEdgeId = hitEdge.targetEdgeId;
+      e1.type = hitEdge.type;
+      e1.portalDirection = hitEdge.portalDirection;
+      e1.textureId = hitEdge.textureId;
+      e1.targetEdgeId = hitEdge.targetEdgeId;
       const e2 = new Edge(newVId, hitEdge.v2Id);
-      e2.type = hitEdge.type; e2.portalDirection = hitEdge.portalDirection;
-      e2.textureId = hitEdge.textureId; e2.targetEdgeId = hitEdge.targetEdgeId;
+      e2.type = hitEdge.type;
+      e2.portalDirection = hitEdge.portalDirection;
+      e2.textureId = hitEdge.textureId;
+      e2.targetEdgeId = hitEdge.targetEdgeId;
       const nextE = State.edges.filter((x) => x.id !== hitEdge.id);
       nextE.push(e1, e2);
       const state = computeStateAfterEdges(State.vertices, nextE, []);
       const oldV = State.vertices.map(cloneVertex);
       const oldE = State.edges.map(cloneEdge);
       State.History!.execute(
-        new GeometryChangeCommand(oldV, oldE, state.newV, state.newE, State.selectedVertices, State.selectedVertices),
+        new GeometryChangeCommand(
+          oldV,
+          oldE,
+          state.newV,
+          state.newE,
+          State.selectedVertices,
+          State.selectedVertices,
+        ),
       );
       State.selectedFaceId.clear();
       State.selectedEdgeId.clear();
@@ -665,14 +899,21 @@ canvas.addEventListener("dblclick", (e) => {
   }
 });
 
-canvas.addEventListener("wheel", (e) => {
-  e.preventDefault();
-  const screen = getMouseCoords(e);
-  const wM = worldFromMouse(screen[0], screen[1]);
-  State.zoom = e.deltaY < 0 ? Math.min(MAX_ZOOM, State.zoom * 1.12) : Math.max(MIN_ZOOM, State.zoom / 1.12);
-  State.offsetX = screen[0] / State.zoom - wM[0];
-  State.offsetY = screen[1] / State.zoom - wM[1];
-}, { passive: false });
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const screen = getMouseCoords(e);
+    const wM = worldFromMouse(screen[0], screen[1]);
+    State.zoom =
+      e.deltaY < 0
+        ? Math.min(MAX_ZOOM, State.zoom * 1.12)
+        : Math.max(MIN_ZOOM, State.zoom / 1.12);
+    State.offsetX = screen[0] / State.zoom - wM[0];
+    State.offsetY = screen[1] / State.zoom - wM[1];
+  },
+  { passive: false },
+);
 
 // =========================
 // INSPECTOR -> STATE
@@ -694,7 +935,8 @@ window.addEventListener("orc_inspector_change", (ev) => {
     State.edges.forEach((edge) => {
       if (State.selectedEdgeId.has(edge.id)) {
         edge.type = values.type as Edge["type"];
-        edge.portalDirection = values.portalDirection as Edge["portalDirection"];
+        edge.portalDirection =
+          values.portalDirection as Edge["portalDirection"];
         edge.textureId = Number(values.textureId);
       }
     });
@@ -721,21 +963,30 @@ window.addEventListener("orc_inspector_change", (ev) => {
 window.addEventListener("orc_inspector_action", (ev) => {
   const e = ev as CustomEvent<InspectorActionDetail>;
   const { id, action } = e.detail;
-  if (id === "wall_inspector" && action === "action_disconnect" && State.selectedEdgeId.size > 0) {
+  if (
+    id === "wall_inspector" &&
+    action === "action_disconnect" &&
+    State.selectedEdgeId.size > 0
+  ) {
     const nextE = State.edges.map(cloneEdge);
     State.selectedEdgeId.forEach((selectedId) => {
       const sEdge = nextE.find((edge) => edge.id === selectedId);
       if (sEdge && sEdge.targetEdgeId) {
         nextE.forEach((edge) => {
-          if (edge.targetEdgeId === sEdge.id || edge.id === sEdge.targetEdgeId) edge.targetEdgeId = null;
+          if (edge.targetEdgeId === sEdge.id || edge.id === sEdge.targetEdgeId)
+            edge.targetEdgeId = null;
         });
         sEdge.targetEdgeId = null;
       }
     });
     State.History!.execute(
       new GeometryChangeCommand(
-        State.vertices, State.edges, State.vertices, nextE,
-        State.selectedVertices, State.selectedVertices,
+        State.vertices,
+        State.edges,
+        State.vertices,
+        nextE,
+        State.selectedVertices,
+        State.selectedVertices,
       ),
     );
     UI.updatePropertiesPanel();
@@ -748,53 +999,112 @@ window.addEventListener("orc_inspector_action", (ev) => {
 let initialPinchDistance: number | null = null;
 let initialZoomState: number | null = null;
 
-canvas.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  if (e.touches.length === 1) {
-    const t = e.touches[0]!;
-    canvas.dispatchEvent(new MouseEvent("mousedown", { clientX: t.clientX, clientY: t.clientY, button: 0, bubbles: true }));
-  } else if (e.touches.length === 2) {
-    if (isMouseDown) window.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
-    isPanning = true;
-    const t1 = e.touches[0]!, t2 = e.touches[1]!;
-    initialPinchDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-    initialZoomState = State.zoom;
-    panLastScreen = [(t1.clientX + t2.clientX) / 2, (t1.clientY + t2.clientY) / 2];
-  }
-}, { passive: false });
-
-canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
-  if (e.touches.length === 1 && !isPanning) {
-    const t = e.touches[0]!;
-    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: t.clientX, clientY: t.clientY, button: 0, bubbles: true }));
-  } else if (e.touches.length === 2) {
-    const t1 = e.touches[0]!, t2 = e.touches[1]!;
-    const currentCenter: Vec2 = [(t1.clientX + t2.clientX) / 2, (t1.clientY + t2.clientY) / 2];
-    const currentDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-    State.offsetX += (currentCenter[0] - panLastScreen[0]) / State.zoom;
-    State.offsetY += (currentCenter[1] - panLastScreen[1]) / State.zoom;
-    panLastScreen = currentCenter;
-    if (initialPinchDistance && initialPinchDistance > 0 && initialZoomState !== null) {
-      const rect = canvas.getBoundingClientRect();
-      const zoomCenterScreen: Vec2 = [
-        (currentCenter[0] - rect.left) * (canvas.width / rect.width),
-        (currentCenter[1] - rect.top) * (canvas.height / rect.height),
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      const t = e.touches[0]!;
+      canvas.dispatchEvent(
+        new MouseEvent("mousedown", {
+          clientX: t.clientX,
+          clientY: t.clientY,
+          button: 0,
+          bubbles: true,
+        }),
+      );
+    } else if (e.touches.length === 2) {
+      if (isMouseDown)
+        window.dispatchEvent(
+          new MouseEvent("mouseup", { button: 0, bubbles: true }),
+        );
+      isPanning = true;
+      const t1 = e.touches[0]!,
+        t2 = e.touches[1]!;
+      initialPinchDistance = Math.hypot(
+        t2.clientX - t1.clientX,
+        t2.clientY - t1.clientY,
+      );
+      initialZoomState = State.zoom;
+      panLastScreen = [
+        (t1.clientX + t2.clientX) / 2,
+        (t1.clientY + t2.clientY) / 2,
       ];
-      const wCenterBefore = worldFromMouse(zoomCenterScreen[0], zoomCenterScreen[1]);
-      const zoomFactor = currentDistance / initialPinchDistance;
-      State.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, initialZoomState * zoomFactor));
-      State.offsetX = zoomCenterScreen[0] / State.zoom - wCenterBefore[0];
-      State.offsetY = zoomCenterScreen[1] / State.zoom - wCenterBefore[1];
     }
-  }
-}, { passive: false });
+  },
+  { passive: false },
+);
+
+canvas.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+    if (e.touches.length === 1 && !isPanning) {
+      const t = e.touches[0]!;
+      canvas.dispatchEvent(
+        new MouseEvent("mousemove", {
+          clientX: t.clientX,
+          clientY: t.clientY,
+          button: 0,
+          bubbles: true,
+        }),
+      );
+    } else if (e.touches.length === 2) {
+      const t1 = e.touches[0]!,
+        t2 = e.touches[1]!;
+      const currentCenter: Vec2 = [
+        (t1.clientX + t2.clientX) / 2,
+        (t1.clientY + t2.clientY) / 2,
+      ];
+      const currentDistance = Math.hypot(
+        t2.clientX - t1.clientX,
+        t2.clientY - t1.clientY,
+      );
+      State.offsetX += (currentCenter[0] - panLastScreen[0]) / State.zoom;
+      State.offsetY += (currentCenter[1] - panLastScreen[1]) / State.zoom;
+      panLastScreen = currentCenter;
+      if (
+        initialPinchDistance &&
+        initialPinchDistance > 0 &&
+        initialZoomState !== null
+      ) {
+        const rect = canvas.getBoundingClientRect();
+        const zoomCenterScreen: Vec2 = [
+          (currentCenter[0] - rect.left) * (canvas.width / rect.width),
+          (currentCenter[1] - rect.top) * (canvas.height / rect.height),
+        ];
+        const wCenterBefore = worldFromMouse(
+          zoomCenterScreen[0],
+          zoomCenterScreen[1],
+        );
+        const zoomFactor = currentDistance / initialPinchDistance;
+        State.zoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, initialZoomState * zoomFactor),
+        );
+        State.offsetX = zoomCenterScreen[0] / State.zoom - wCenterBefore[0];
+        State.offsetY = zoomCenterScreen[1] / State.zoom - wCenterBefore[1];
+      }
+    }
+  },
+  { passive: false },
+);
 
 window.addEventListener("touchend", (e) => {
-  if (e.touches.length < 2) { isPanning = false; initialPinchDistance = null; }
+  if (e.touches.length < 2) {
+    isPanning = false;
+    initialPinchDistance = null;
+  }
   if (e.touches.length === 0) {
     const t = e.changedTouches[0]!;
-    window.dispatchEvent(new MouseEvent("mouseup", { clientX: t.clientX, clientY: t.clientY, button: 0, bubbles: true }));
+    window.dispatchEvent(
+      new MouseEvent("mouseup", {
+        clientX: t.clientX,
+        clientY: t.clientY,
+        button: 0,
+        bubbles: true,
+      }),
+    );
   }
 });
 
@@ -806,23 +1116,34 @@ function render(): void {
   ctx.fillStyle = "#0d0f12";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  ctx.setTransform(State.zoom, 0, 0, State.zoom, State.offsetX * State.zoom, State.offsetY * State.zoom);
+  ctx.setTransform(
+    State.zoom,
+    0,
+    0,
+    State.zoom,
+    State.offsetX * State.zoom,
+    State.offsetY * State.zoom,
+  );
 
-  const left = -State.offsetX, right = left + canvas.width / State.zoom;
-  const top = -State.offsetY, bottom = top + canvas.height / State.zoom;
+  const left = -State.offsetX,
+    right = left + canvas.width / State.zoom;
+  const top = -State.offsetY,
+    bottom = top + canvas.height / State.zoom;
   ctx.lineWidth = 1 / State.zoom;
   for (let x = Math.floor(left / 40) * 40; x < right; x += 40) {
     ctx.beginPath();
     ctx.moveTo(x, top);
     ctx.lineTo(x, bottom);
-    ctx.strokeStyle = x % 200 === 0 ? "rgba(160,180,220,0.22)" : "rgba(120,140,180,0.05)";
+    ctx.strokeStyle =
+      x % 200 === 0 ? "rgba(160,180,220,0.22)" : "rgba(120,140,180,0.05)";
     ctx.stroke();
   }
   for (let y = Math.floor(top / 40) * 40; y < bottom; y += 40) {
     ctx.beginPath();
     ctx.moveTo(left, y);
     ctx.lineTo(right, y);
-    ctx.strokeStyle = y % 200 === 0 ? "rgba(160,180,220,0.22)" : "rgba(120,140,180,0.05)";
+    ctx.strokeStyle =
+      y % 200 === 0 ? "rgba(160,180,220,0.22)" : "rgba(120,140,180,0.05)";
     ctx.stroke();
   }
 
@@ -835,8 +1156,10 @@ function render(): void {
     do {
       const v = getV(State.vertices, currEdge.originId);
       if (v) {
-        if (first) { ctx.moveTo(v.x, v.y); first = false; }
-        else ctx.lineTo(v.x, v.y);
+        if (first) {
+          ctx.moveTo(v.x, v.y);
+          first = false;
+        } else ctx.lineTo(v.x, v.y);
       }
       if (!currEdge.next) break;
       currEdge = currEdge.next;
@@ -885,11 +1208,15 @@ function render(): void {
     if (edge.type === "portal" && edge.targetEdgeId) {
       const target = State.edges.find((e) => e.id === edge.targetEdgeId);
       if (target && edge.id < target.id) {
-        const v1 = getV(State.vertices, edge.v1Id), v2 = getV(State.vertices, edge.v2Id);
-        const tv1 = getV(State.vertices, target.v1Id), tv2 = getV(State.vertices, target.v2Id);
+        const v1 = getV(State.vertices, edge.v1Id),
+          v2 = getV(State.vertices, edge.v2Id);
+        const tv1 = getV(State.vertices, target.v1Id),
+          tv2 = getV(State.vertices, target.v2Id);
         if (v1 && v2 && tv1 && tv2) {
-          const m1X = (v1.x + v2.x) / 2, m1Y = (v1.y + v2.y) / 2;
-          const m2X = (tv1.x + tv2.x) / 2, m2Y = (tv1.y + tv2.y) / 2;
+          const m1X = (v1.x + v2.x) / 2,
+            m1Y = (v1.y + v2.y) / 2;
+          const m2X = (tv1.x + tv2.x) / 2,
+            m2Y = (tv1.y + tv2.y) / 2;
           ctx.beginPath();
           ctx.strokeStyle = "rgba(68, 255, 255, 0.25)";
           ctx.setLineDash([4 / State.zoom, 8 / State.zoom]);
@@ -906,9 +1233,11 @@ function render(): void {
   if (isMouseDown && draggingPortalId) {
     const sEdge = State.edges.find((e) => e.id === draggingPortalId);
     if (sEdge) {
-      const v1 = getV(State.vertices, sEdge.v1Id), v2 = getV(State.vertices, sEdge.v2Id);
+      const v1 = getV(State.vertices, sEdge.v1Id),
+        v2 = getV(State.vertices, sEdge.v2Id);
       if (v1 && v2) {
-        const m1X = (v1.x + v2.x) / 2, m1Y = (v1.y + v2.y) / 2;
+        const m1X = (v1.x + v2.x) / 2,
+          m1Y = (v1.y + v2.y) / 2;
         ctx.beginPath();
         ctx.strokeStyle = "#44ffff";
         ctx.setLineDash([6 / State.zoom, 6 / State.zoom]);
@@ -937,7 +1266,10 @@ function render(): void {
     ctx.beginPath();
     ctx.moveTo(ent.x, ent.y);
     const aRad = ent.angle * (Math.PI / 180);
-    ctx.lineTo(ent.x + (Math.cos(aRad) * 16) / State.zoom, ent.y + (Math.sin(aRad) * 16) / State.zoom);
+    ctx.lineTo(
+      ent.x + (Math.cos(aRad) * 16) / State.zoom,
+      ent.y + (Math.sin(aRad) * 16) / State.zoom,
+    );
     ctx.lineWidth = 2 / State.zoom;
     ctx.strokeStyle = "#ffffff";
     ctx.stroke();
@@ -945,7 +1277,8 @@ function render(): void {
 
   // Edges
   State.edges.forEach((edge) => {
-    const v1 = getV(State.vertices, edge.v1Id), v2 = getV(State.vertices, edge.v2Id);
+    const v1 = getV(State.vertices, edge.v1Id),
+      v2 = getV(State.vertices, edge.v2Id);
     if (!v1 || !v2) return;
 
     let isLoose = true;
@@ -956,7 +1289,9 @@ function render(): void {
     ctx.moveTo(v1.x, v1.y);
     ctx.lineTo(v2.x, v2.y);
 
-    const standsSelected = State.selectedVertices.has(edge.v1Id) && State.selectedVertices.has(edge.v2Id);
+    const standsSelected =
+      State.selectedVertices.has(edge.v1Id) &&
+      State.selectedVertices.has(edge.v2Id);
     ctx.lineWidth = standsSelected ? 3.5 / State.zoom : 2 / State.zoom;
 
     if (edge.type === "portal") {
@@ -983,12 +1318,16 @@ function render(): void {
     ctx.setLineDash([]);
 
     if (edge.type === "portal") {
-      const midX = (v1.x + v2.x) / 2, midY = (v1.y + v2.y) / 2;
-      const dx = v2.x - v1.x, dy = v2.y - v1.y;
+      const midX = (v1.x + v2.x) / 2,
+        midY = (v1.y + v2.y) / 2;
+      const dx = v2.x - v1.x,
+        dy = v2.y - v1.y;
       const len = Math.hypot(dx, dy);
       if (len > 0) {
-        const nx = -dy / len, ny = dx / len;
-        const arrowLen = 12 / State.zoom, headLen = 6 / State.zoom;
+        const nx = -dy / len,
+          ny = dx / len;
+        const arrowLen = 12 / State.zoom,
+          headLen = 6 / State.zoom;
         const drawArrow = (dirX: number, dirY: number) => {
           const angle = Math.atan2(dirY, dirX);
           ctx.beginPath();
@@ -1019,12 +1358,17 @@ function render(): void {
     ctx.fillStyle = "rgba(255, 68, 68, 0.04)";
     ctx.strokeStyle = "rgba(255, 68, 68, 0.2)";
     ctx.lineWidth = 1 / State.zoom;
-    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+    let xMin = Infinity,
+      xMax = -Infinity,
+      yMin = Infinity,
+      yMax = -Infinity;
     State.selectedVertices.forEach((vid) => {
       const v = getV(State.vertices, vid);
       if (v) {
-        xMin = Math.min(xMin, v.x); xMax = Math.max(xMax, v.x);
-        yMin = Math.min(yMin, v.y); yMax = Math.max(yMax, v.y);
+        xMin = Math.min(xMin, v.x);
+        xMax = Math.max(xMax, v.x);
+        yMin = Math.min(yMin, v.y);
+        yMax = Math.max(yMax, v.y);
       }
     });
     ctx.fillRect(xMin - 6, yMin - 6, xMax - xMin + 12, yMax - yMin + 12);
@@ -1036,7 +1380,8 @@ function render(): void {
     ctx.beginPath();
     ctx.arc(v.x, v.y, 4 / State.zoom, 0, 2 * Math.PI);
     if (State.selectedVertices.has(v.id)) ctx.fillStyle = "#ff4444";
-    else if (v.zFloorOffset !== 0 || v.zCeilOffset !== 0) ctx.fillStyle = "#ffaa00";
+    else if (v.zFloorOffset !== 0 || v.zCeilOffset !== 0)
+      ctx.fillStyle = "#ffaa00";
     else ctx.fillStyle = "#44ff88";
     ctx.fill();
     ctx.lineWidth = 1 / State.zoom;
@@ -1068,8 +1413,18 @@ function render(): void {
     ctx.fillStyle = "rgba(0, 160, 255, 0.08)";
     ctx.strokeStyle = "rgba(0, 160, 255, 0.5)";
     ctx.lineWidth = 1 / State.zoom;
-    ctx.fillRect(boxStartWorld[0], boxStartWorld[1], currentRawMouse[0] - boxStartWorld[0], currentRawMouse[1] - boxStartWorld[1]);
-    ctx.strokeRect(boxStartWorld[0], boxStartWorld[1], currentRawMouse[0] - boxStartWorld[0], currentRawMouse[1] - boxStartWorld[1]);
+    ctx.fillRect(
+      boxStartWorld[0],
+      boxStartWorld[1],
+      currentRawMouse[0] - boxStartWorld[0],
+      currentRawMouse[1] - boxStartWorld[1],
+    );
+    ctx.strokeRect(
+      boxStartWorld[0],
+      boxStartWorld[1],
+      currentRawMouse[0] - boxStartWorld[0],
+      currentRawMouse[1] - boxStartWorld[1],
+    );
   }
   ctx.restore();
 
@@ -1078,18 +1433,32 @@ function render(): void {
     if (vAnchor) {
       const radius = Math.hypot(snapped[0] - vAnchor.x, snapped[1] - vAnchor.y);
       if (radius > 10) {
-        const sidesInput = document.getElementById("ngon-sides") as HTMLInputElement | null;
-        const sides = Math.max(3, Math.min(12, parseInt(sidesInput?.value ?? "8") || 8));
+        const sidesInput = document.getElementById(
+          "ngon-sides",
+        ) as HTMLInputElement | null;
+        const sides = Math.max(
+          3,
+          Math.min(12, parseInt(sidesInput?.value ?? "8") || 8),
+        );
         ctx.save();
-        ctx.setTransform(State.zoom, 0, 0, State.zoom, State.offsetX * State.zoom, State.offsetY * State.zoom);
+        ctx.setTransform(
+          State.zoom,
+          0,
+          0,
+          State.zoom,
+          State.offsetX * State.zoom,
+          State.offsetY * State.zoom,
+        );
         ctx.beginPath();
         ctx.strokeStyle = "#ffd966";
         ctx.setLineDash([5 / State.zoom, 5 / State.zoom]);
         ctx.lineWidth = 2 / State.zoom;
         for (let i = 0; i <= sides; i++) {
           const ang = (i / sides) * Math.PI * 2;
-          const px = Math.round((vAnchor.x + Math.cos(ang) * radius) / SNAP) * SNAP;
-          const py = Math.round((vAnchor.y + Math.sin(ang) * radius) / SNAP) * SNAP;
+          const px =
+            Math.round((vAnchor.x + Math.cos(ang) * radius) / SNAP) * SNAP;
+          const py =
+            Math.round((vAnchor.y + Math.sin(ang) * radius) / SNAP) * SNAP;
           if (i === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         }

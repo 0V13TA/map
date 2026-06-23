@@ -1,5 +1,11 @@
 import type { UUID, EdgeType, PortalDirection, EntityType } from "./types";
 
+export function cloneEntity(e: Entity): Entity {
+  const ne = new Entity(e.x, e.y, e.type, e.id);
+  ne.angle = e.angle;
+  return ne;
+}
+
 export function generateUUID(): UUID {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID() as UUID;
@@ -48,7 +54,12 @@ export class Entity {
   type: EntityType;
   angle = 0;
 
-  constructor(x: number, y: number, type: EntityType = "PlayerSpawn", id: UUID | null = null) {
+  constructor(
+    x: number,
+    y: number,
+    type: EntityType = "PlayerSpawn",
+    id: UUID | null = null,
+  ) {
     this.id = id ?? generateUUID();
     this.x = x;
     this.y = y;
@@ -59,7 +70,11 @@ export class Entity {
 export const getV = (vertices: Vertex[], id: UUID): Vertex | undefined =>
   vertices.find((v) => v.id === id);
 
-export function getOrCreateVertexInPool(vPool: Vertex[], x: number, y: number): UUID {
+export function getOrCreateVertexInPool(
+  vPool: Vertex[],
+  x: number,
+  y: number,
+): UUID {
   const existing = vPool.find((v) => Math.hypot(v.x - x, v.y - y) < 0.001);
   if (existing) return existing.id;
   const nv = new Vertex(x, y);
@@ -67,7 +82,10 @@ export function getOrCreateVertexInPool(vPool: Vertex[], x: number, y: number): 
   return nv.id;
 }
 
-export function buildAdjacencyMap(vertexPool: Vertex[], edgePool: Edge[]): Map<UUID, UUID[]> {
+export function buildAdjacencyMap(
+  vertexPool: Vertex[],
+  edgePool: Edge[],
+): Map<UUID, UUID[]> {
   const adjacency = new Map<UUID, UUID[]>();
   vertexPool.forEach((v) => adjacency.set(v.id, []));
 

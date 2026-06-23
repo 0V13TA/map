@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>ORC Map Editor</title>
     <link rel="stylesheet" href="/src/ui/styles.css" />
   </head>
@@ -10,10 +13,20 @@
     <div id="app">
       <header id="toolbar">
         <div class="toolbar-group">
+          <button
+            id="btn-toggle-sidebar"
+            class="tool-btn"
+            title="Toggle Sidebar"
+          >
+            ☰
+          </button>
+
           <button class="tool-btn" data-tool="LINE" title="Line (1)">✏️</button>
           <button class="tool-btn" data-tool="NGON" title="N-Gon (3)">⬡</button>
           <button class="tool-btn" data-tool="ZOOM" title="Zoom (4)">🔍</button>
-          <button class="tool-btn" data-tool="DRAG" title="Drag/Select (5)">✋</button>
+          <button class="tool-btn" data-tool="DRAG" title="Drag/Select (5)">
+            ✋
+          </button>
           <button class="tool-btn" data-tool="ENTITY" title="Entity">★</button>
         </div>
         <div class="toolbar-group">
@@ -27,7 +40,9 @@
           <button id="btn-redo" class="action-btn">↷ Redo</button>
           <button id="btn-rotate" class="action-btn">⟳ Rotate</button>
           <button id="btn-delete" class="action-btn dest-btn">✖ Delete</button>
-          <button id="btn-toggle-triangles" class="action-btn">📐 Triangles: Off</button>
+          <button id="btn-toggle-triangles" class="action-btn">
+            📐 Triangles: Off
+          </button>
         </div>
         <div class="toolbar-group">
           <button id="btn-export" class="action-btn">⬇ Export ZIP</button>
@@ -41,10 +56,24 @@
         <div class="panel-title">Campaign</div>
         <div id="level-list"></div>
         <button id="btn-new-level" class="action-btn">+ New Level</button>
-        <button class="action-btn" id="btn-import-workspace" style="justify-content: center; margin-top: 4px; background: rgba(255, 200, 68, 0.1); color: #ffc844;">
-        📂 Import .ZIP
-      </button>
-      <input type="file" id="file-import-input" accept=".zip" style="display: none;" />
+        <button
+          class="action-btn"
+          id="btn-import-workspace"
+          style="
+            justify-content: center;
+            margin-top: 4px;
+            background: rgba(255, 200, 68, 0.1);
+            color: #ffc844;
+          "
+        >
+          📂 Import .ZIP
+        </button>
+        <input
+          type="file"
+          id="file-import-input"
+          accept=".zip"
+          style="display: none"
+        />
 
         <div id="dynamic-properties-panel" class="hidden">
           <div class="panel-title">Inspector</div>
@@ -61,7 +90,9 @@
             <button id="close-settings" class="action-btn">✖</button>
           </div>
           <div id="bindings-container"></div>
-          <button id="btn-reset-bindings" class="action-btn">Reset to defaults</button>
+          <button id="btn-reset-bindings" class="action-btn">
+            Reset to defaults
+          </button>
         </div>
       </div>
     </div>
