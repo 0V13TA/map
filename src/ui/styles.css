@@ -34,7 +34,7 @@ body {
     "toolbar toolbar"
     "sidebar canvas";
   grid-template-columns: 260px 1fr;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   width: 100vw;
 }
@@ -229,4 +229,129 @@ body {
 }
 #app.sidebar-closed #sidebar {
   display: none;
+}
+
+/* Sidebar Level Buttons & Layout */
+.level-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.level-btn {
+  justify-content: flex-start;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid transparent;
+  flex-grow: 1; /* Pushes the trash can to the edge */
+}
+
+.level-btn.active {
+  background: rgba(68, 255, 136, 0.1);
+  border-color: rgba(68, 255, 136, 0.3);
+  color: #44ff88;
+}
+
+/* Sidebar Action Buttons */
+.delete-level-btn {
+  padding: 4px 8px;
+  background: rgba(255, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid transparent;
+}
+.delete-level-btn:hover {
+  background: rgba(255, 68, 68, 0.2);
+  border-color: rgba(255, 68, 68, 0.4);
+}
+
+.new-level-btn {
+  justify-content: center;
+  margin-top: 8px;
+  background: rgba(68, 255, 136, 0.1);
+  color: #44ff88;
+  border: 1px solid transparent;
+}
+.new-level-btn:hover {
+  background: rgba(68, 255, 136, 0.2);
+  border-color: rgba(68, 255, 136, 0.4);
+}
+
+.import-workspace-btn {
+  justify-content: center;
+  margin-top: 4px;
+  background: rgba(255, 200, 68, 0.1);
+  color: #ffc844;
+  border: 1px solid transparent;
+}
+.import-workspace-btn:hover {
+  background: rgba(255, 200, 68, 0.2);
+  border-color: rgba(255, 200, 68, 0.4);
+}
+
+#toolbar {
+  grid-area: toolbar;
+  display: flex;
+  flex-wrap: wrap; /* UPGRADED: Wrap tools instead of scrolling */
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+
+  /* Glassmorphism Effect */
+  background: rgba(22, 26, 33, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  border-bottom: 1px solid var(--border);
+  z-index: 10; /* Ensures the shadow and blur sit above the canvas */
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap; /* Allows internal button groups to wrap safely */
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-btn,
+.action-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 12px; /* Slightly larger click targets */
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  /* Smooth physics-based transition */
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.tool-btn:hover,
+.action-btn:hover {
+  background: #242b3c;
+  transform: translateY(-1px); /* Slight lift on hover */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.tool-btn:active,
+.action-btn:active {
+  transform: translateY(1px); /* Physical press-down effect */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.tool-btn.active {
+  background: rgba(255, 217, 102, 0.08); /* Faint yellow wash */
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  box-shadow: 0 0 12px rgba(255, 217, 102, 0.15); /* Ambient glow */
+}
+
+.action-btn.dest-btn {
+  color: var(--danger);
+}
+.action-btn.dest-btn:hover {
+  background: rgba(255, 68, 68, 0.1);
+  border-color: rgba(255, 68, 68, 0.3);
+  box-shadow: 0 0 12px rgba(255, 68, 68, 0.15);
 }

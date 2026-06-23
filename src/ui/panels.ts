@@ -338,25 +338,18 @@ export const UI = {
     list.innerHTML = "";
     Campaign.levels.forEach((level, index) => {
       const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.gap = "4px";
-      row.style.width = "100%";
 
       const btn = document.createElement("button");
       btn.className =
         "action-btn level-btn" +
         (index === Campaign.activeLevelIndex ? " active" : "");
       btn.textContent = level.name;
-      btn.style.flexGrow = "1";
       btn.addEventListener("click", () => switchLevel(index));
 
       const delBtn = document.createElement("button");
       delBtn.className = "action-btn";
       delBtn.innerHTML = "🗑️";
       delBtn.title = "Delete Level";
-      delBtn.style.padding = "4px 8px";
-      delBtn.style.background = "rgba(255, 68, 68, 0.1)";
-      delBtn.style.color = "#ff4444";
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         deleteLevel(index);
